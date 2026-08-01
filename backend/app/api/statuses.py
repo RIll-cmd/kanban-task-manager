@@ -14,6 +14,7 @@ class StatusCreate(BaseModel):
     swimlane_name: Optional[str] = "General"
     order: Optional[int] = None
     default_progress: Optional[int] = None
+    color: Optional[str] = None
 
 
 class StatusUpdate(BaseModel):
@@ -22,6 +23,7 @@ class StatusUpdate(BaseModel):
     swimlane_name: Optional[str] = None
     order: Optional[int] = None
     default_progress: Optional[int] = None
+    color: Optional[str] = None
 
 
 @router.get("/statuses", response_model=List[Status])
@@ -66,6 +68,7 @@ def create_status(
         swimlane_name=swimlane,
         order=new_order,
         default_progress=data.default_progress,
+        color=data.color or "#00ffff",
     )
     session.add(status_obj)
     session.commit()
@@ -112,6 +115,7 @@ def update_status(
             swimlane_name=swimlane_to_use,
             order=max_order + 1,
             default_progress=payload.default_progress if payload else None,
+            color=payload.color if payload and payload.color else "#00ffff",
         )
         session.add(status_obj)
     else:
@@ -125,6 +129,8 @@ def update_status(
                 status_obj.default_progress = payload.default_progress
             if payload.swimlane_name:
                 status_obj.swimlane_name = payload.swimlane_name
+            if payload.color is not None:
+                status_obj.color = payload.color
         session.add(status_obj)
 
         # Bulk update tasks matching old_status_name and old_status_swimlane

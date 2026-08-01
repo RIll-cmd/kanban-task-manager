@@ -11,6 +11,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.32.1] - 2026-08-02
+
+### Fixed
+- **Syntax Repair in `PromptTerminal.tsx`**: Removed duplicate closing line in `useEffect` dependency array that caused a compiler parse error.
+
+---
+
+## [1.32.0] - 2026-08-02
+
+### Added
+- **Swimlane & Status Column Accent Color Customization**:
+  - **Backend Schema & Migrations (`color`)**: Added `color` column (`default="#00ffff"`) to `Swimlane` and `Status` models, API router schemas, and database migration scripts.
+  - **Prompt Terminal Hex Color Input (`PromptTerminal.tsx`)**: Extended `PromptTerminal` to support color input (`> COLOR_HEX`) with a live color preview block next to the input.
+  - **Swimlane Header Color Customization**: Clicking `[EDIT]` on a Swimlane allows editing both name and accent color; dynamically applies `color` to title text and diamond indicator via inline styles.
+  - **Status Column Color Customization**: Clicking the edit pencil on a status column allows configuring name, default progress, and accent color; dynamically applies `color` to status title, progress percentage, and diamond indicator.
+
+---
+
+## [1.31.0] - 2026-08-02
+
+### Changed
+- **Progress Override Refinement & Clean UI (`CreateTaskTerminal.tsx` & `EditTaskTerminal.tsx`)**:
+  - **Disabled Status Auto-Overrides**: Removed all automatic progress overrides when selecting "To Do", "In Progress", or "Review" status dropdown options; the progress slider remains completely unconstrained and preserves the user's manual value.
+  - **Exclusive Done Completion Rule**: Preserved automatic 100% progress snapping strictly when status is changed or dropped into "Done" / "DONE".
+  - **Clean Slider Interface**: Removed all extra snap buttons (`[SNAP_0%]`, `[SNAP_50%]`, `[SNAP_80%]`) to maintain the clean, uncluttered Cyberpunk terminal UI layout.
+  - **Safety Fallbacks**: Ensured progress defaults cleanly to the task's existing value or `0` for new tasks without being forced by status selections.
+
+---
+
+## [1.30.0] - 2026-08-02
+
+### Added
+- **Disabled Column Progress Overrides & Complete Snap Helper Matrix**:
+  - **Drag-and-Drop Handler Refinement (`App.tsx`)**: Removed default column progress overrides when dragging tasks between "To Do", "In Progress", or "Review" columns; tasks retain their current progress percentage.
+  - **Exclusive Done Column Rule**: Retained automatic 100% progress snapping strictly for tasks moved into the "Done" column.
+  - **Full Snap Helper Suite (`[SNAP_0%]`, `[SNAP_50%]`, `[SNAP_80%]`)**:
+    - Status = **To Do** -> Renders `[SNAP_0%]`.
+    - Status = **In Progress** -> Renders `[SNAP_50%]`.
+    - Status = **Review** -> Renders `[SNAP_80%]`.
+  - **Payload Safety**: Guaranteed initial progress defaults to `0` or existing task progress so payload submission is never undefined.
+
+---
+
+## [1.29.0] - 2026-08-02
+
+### Added
+- **Interactive Progress Slider Snap Helpers**:
+  - **Free Manual Slider Control**: Ensured status changes between "To Do", "In Progress", and "Review" never force progress overrides, while preserving the completion rule for "Done" (snaps to 100%).
+  - **Conditional Snap Helper Buttons**:
+    - Renders `[SNAP_50%]` next to slider when status is "In Progress".
+    - Renders `[SNAP_80%]` next to slider when status is "Review".
+  - **Cyberpunk Terminal Styling**: Styled with zero-radius monospace buttons (`font-mono border border-neon-cyan/40 bg-neon-cyan/5 text-neon-cyan hover:bg-neon-cyan/20`).
+  - **Both Creation & Edit Modals**: Integrated in `EditTaskTerminal.tsx` and `CreateTaskTerminal.tsx`.
+
+---
+
+## [1.28.0] - 2026-08-01
+
+### Added
+- **Task Archival & Retrieval System**:
+  - **Backend Model & Migration (`is_archived`)**: Added `is_archived: bool = Field(default=False)` to the `Task` model, Pydantic schemas, and database migration script.
+  - **Card `[ARCHIVE]` Action**: Added an `[ARCHIVE]` button (neon amber styling) to `TaskCard` header when task progress is 100% and not yet archived.
+  - **Card `[RESTORE]` Action**: Added a `[RESTORE]` button (neon green styling) to `TaskCard` header when viewing archived tasks, restoring them back to the active board on click.
+  - **HUD Display Config Archive Mode Toggle (`showArchived`)**: Added `[ ] VIEW_ARCHIVE` toggle item to the `[Y] DISPLAY_CONFIG` dropdown checklist.
+  - **Board View Filtering**: Updated board filtering engine to exclusively hide archived tasks during normal view and exclusively display archived tasks in Archive Mode.
+
+---
+
+## [1.27.0] - 2026-08-01
+
+### Added
+- **Task Deletion & Purge Capability in Edit Terminal**:
+  - **Backend Endpoint (`DELETE /api/tasks/{task_id}`)**: Created endpoint returning HTTP 204 No Content and logging an activity log entry (`Task Deleted`).
+  - **API Client Function (`deleteTask`)**: Added `deleteTask(taskId)` helper function in `frontend/src/api/client.ts`.
+  - **Cyberpunk Purge Button (`EditTaskTerminal.tsx`)**: Injected `[❌ PURGE_NODE]` button with crimson styling (`border border-neon-red/60 bg-neon-red/10 text-neon-red hover:bg-neon-red hover:text-void rounded-none`) into the bottom action row (`type="button"` to avoid form submission).
+  - **Terminal Error Integration & Immediate State Refresh**: Handled deletion errors via `parseApiError`, closed modal state cleanly on success, and triggered an immediate board tasks refresh in `App.tsx`.
+
+---
+
+## [1.26.0] - 2026-08-01
+
+### Added
+- **Cross-Lane Node Tracking Manifest (`[NODE_MANIFEST]`)**:
+  - **Interactive `[SYS_AVG_PROGRESS]` Toggle**: Converted static progress readout into an interactive Cyberpunk trigger banner (`cursor-pointer`) displaying expand/collapse status arrows (`▼` / `▶`).
+  - **Expandable Terminal Manifest (`TaskCard.tsx`)**: Created a nested dark terminal panel (`bg-void-card/95 border border-neon-magenta/60 rounded-none`) listing all matching sister node locations.
+  - **Location & Progress Tracking Matrix**: Renders single-line entries for each duplicate node: `> [SWIMLANE_CATEGORY] / [STATUS_COLUMN] : PROGRESS -> [PERCENT]%`.
+  - **Active Node Highlighting**: Highlights the current card's entry with a `▶` indicator arrow, `bg-neon-magenta/25` background, and bold neon text.
+
+---
+
+## [1.25.0] - 2026-08-01
+
+### Fixed
+- **Duplication Handshake & Immediate State Refresh**:
+  - **Backend Model Alignment (`tasks.py`)**: Fixed `duplicate_task` endpoint in `backend/app/api/tasks.py` by mapping `previous_progress` instead of invalid kwarg `progress_percentage`.
+  - **Backend & Frontend Logging**: Added explicit terminal prints (`[DPL_BACKEND]` & `[DPL_BACKEND_SUCCESS]`) and console readouts (`[DPL PAYLOAD SENT]` & `[DPL SUCCESS]`).
+  - **Case-Insensitive Progress Calculation (`task.py`)**: Made `calculate_progress` model validator check `self.status.upper() == "DONE"`.
+  - **Board State Synchronization (`App.tsx`)**: Updated `handleTaskCreated` callback to optimistically inject the cloned task and trigger an immediate re-fetch via `getTasks()`.
+
+---
+
+## [1.24.0] - 2026-08-01
+
+### Fixed
+- **React Portal Architecture for Duplicate Menu (`<TaskCard>`)**:
+  - **Portal Target (`index.html`)**: Added `<div id="duplicate-menu-portal"></div>` directly beneath `<div id="root"></div>` in `index.html`.
+  - **`createPortal` Implementation (`TaskCard.tsx`)**: Refactored `[SNAPSHOT_DUPLICATE]` menu popup rendering to use `createPortal`, injecting the DOM node directly into `#duplicate-menu-portal`.
+  - **Dynamic Page Positioning**: Computed exact page coordinates (`rect.bottom + window.scrollY`, `rect.right + window.scrollX - 224`), eliminating any risk of parent overflow or stacking context clipping.
+
+---
+
+## [1.23.0] - 2026-08-01
+
+### Fixed
+- **Duplicate Menu Overflow & Clipping Fix (`<TaskCard>`)**:
+  - **Fixed Viewport Positioning**: Replaced relative inline container popup layout with fixed viewport positioning using `getBoundingClientRect()` on the `[DPL]` button (`top: rect.bottom + 4`, `left: rect.right - 224`).
+  - **Escaped Container Overflow & Stacking Contexts**: Assigned `z-[9999]` to the duplicate dropdown container and elevated the parent card z-index (`z-40`), ensuring the menu never clips under column borders or sibling task cards.
+  - **Scroll & Window Event Listeners**: Added window scroll and resize event listeners to automatically close or re-anchor the dropdown when the board is scrolled.
+
+---
+
+## [1.22.0] - 2026-08-01
+
+### Added
+- **Path B: Snapshot Duplication & Cross-Lane Aggregate Progress**:
+  - **Backend Duplication Endpoint (`POST /api/tasks/{id}/duplicate`)**: Added endpoint taking target `category` and `status`, creating an independent task record duplicating title, description, note, tags, priority, dates, and progress snapshot. Automatically applies 100% progress override if target status is "Done".
+  - **HUD Display Toggle (`showCrossLaneStats`)**: Added `[x] Show Cross-Lane Stats` toggle option in the `[Y] DISPLAY_CONFIG` dropdown checklist.
+  - **Cross-Lane Aggregate Progress Readout (`<TaskCard>`)**: Evaluates matching task titles across all swimlanes on the board, displaying `[SYS_AVG_PROGRESS] > {crossLaneAvgProgress}%` in neon magenta above progress bars when matching occurrences exist.
+  - **Card Snapshot Duplicate Button (`[DPL]`)**: Added a Cyberpunk `[DPL]` button on `<TaskCard>` headers opening an in-card dropdown menu to select target swimlane & status and execute snapshot duplication.
+
+---
+
+## [1.21.0] - 2026-08-01
+
+### Added
+- **Smart Progress Override Rule for "Done" Status**:
+  - **Edit & Create Terminal Modals**: Added reactive `useEffect` watching status selection to automatically snap progress to 100% when status is set to "Done" (case-insensitive check: `status.toUpperCase() === 'DONE'`).
+  - **Manual Adjustment Flexibility**: Switching from "Done" back to another status keeps the slider at 100% allowing manual user adjustment.
+  - **Drag-and-Drop Handler**: Updated `handleDragEnd` in `App.tsx` with case-insensitive `DONE` status checks (`isDestDone = destStatus.toUpperCase() === 'DONE'`), automatically setting task progress to 100% on column drop.
+
+---
+
+## [1.20.0] - 2026-08-01
+
+### Added
+- **Dynamic Column Average Progress Metric**:
+  - Replaced static status default progress values with real-time average progress calculations (`averageProgress = Math.round(sum / tasks.length)`).
+  - Handles empty columns cleanly (`0%` fallback) preventing `NaN` formatting errors.
+  - Rendered formatted percentage `({averageProgress}%)` next to each status column title in Cyberpunk cyan styling (`text-neon-cyan/70`) with informative task count tooltips.
+
+---
+
+## [1.19.0] - 2026-08-01
+
+### Added
+- **Localized Task Creation & Empty Column Initiators**:
+  - **Column Header Localized Add Button**: Added a Cyberpunk `[+]` button to each status column header in swimlanes to open `<CreateTaskTerminal>` pre-filled with that column's status and swimlane category.
+  - **Clickable Empty Column Initiator**: Updated the `> EMPTY_LANE_` placeholder block into an interactive Cyberpunk trigger (`> EMPTY_LANE_ [ + INITIATE ]`) that opens task creation pre-filled for that specific location.
+  - **Default Override Support in `<CreateTaskTerminal>`**: Updated `<CreateTaskTerminal>` with `defaultCategory` and `defaultStatus` props while preserving standard default behavior for the global `+ INITIATE_TASK` HUD button.
+
+---
+
+## [1.18.0] - 2026-08-01
+
+### Added
+- **FastAPI 422 Error Parsing Utility & Cyberpunk Terminal Alerts**:
+  - Created `parseApiError` helper in `frontend/src/utils/errorParser.ts` to parse caught exception payloads, FastAPI 422 Pydantic validation error arrays, and stringified JSON detail payloads.
+  - Formatted field validation failures into clean Cyberpunk terminal readouts: `[ERR_FIELD: FIELD_NAME] > MSG_TEXT`.
+  - Updated `<CreateTaskTerminal>` and `<EditTaskTerminal>` to catch exceptions, parse validation errors into multiline string arrays, and render styled terminal alert banners (`bg-neon-red/10 border-neon-red/60 text-neon-red`).
+
+---
+
+## [1.17.0] - 2026-08-01
+
+### Added
+- **Phase 3: Global Board Search Engine, Tag Filter & Property Visibility Controls**:
+  - **Cyberpunk Search Bar (`> SEARCH_SYS`)**: Added real-time text filter in top HUD searching task titles and descriptions with instant board updates.
+  - **HUD Display Config Dropdown (`[Y] DISPLAY_CONFIG`)**: Built a custom absolute-positioned Cyberpunk dropdown menu with zero border radius, void background, and neon amber accent styling.
+  - **Multi-Tag Filter Engine**: Filter tasks by toggling global tags (includes `[CLEAR_FILTERS]` button). Tasks match only if they contain all active filter tags.
+  - **Dynamic Property Visibility Checklist**: Custom bracket toggles (`[x]` / `[ ]`) controlling visibility for Task ID (`#id`), Tag Pills, Temporal Dates (`START`, `SCHED`, `DUE`), and Progress Bars in `<TaskCard>`.
+
+---
+
+## [1.16.0] - 2026-08-01
+
+### Added
+- **Custom Cyberpunk React Tag Autocomplete Dropdown & Toggle Button**:
+  - Replaced native browser `<datalist>` autocomplete with a custom Cyberpunk React dropdown in `<CreateTaskTerminal>` and `<EditTaskTerminal>`.
+  - Added an in-input manual dropdown toggle button (`[▼]`) with Cyberpunk neon hover glow effects.
+  - Implemented click-outside dismissal (`useRef` + `mousedown` listener) and input `onFocus` activation.
+  - Renders unfiltered global tags when input is empty upon clicking `[▼]`, and dynamically filters matching suggestions while typing.
+  - Zero border-radius (`rounded-none`), void background (`bg-void-card`), and custom neon tag text colors with hover highlight effects.
+
+---
+
+## [1.15.0] - 2026-08-01
+
+### Added
+- **Global Tag Management System & Custom Neon Color Palette**:
+  - **Backend Tag Color Field & Delete Endpoint**: Added `color` column to `Hashtag` SQLModel with automated database migration check, updated `POST /api/hashtags` to accept custom colors, and added `DELETE /api/hashtags/{id}`.
+  - **Global Tags Management Terminal (`<ManageTagsTerminal>`)**: Added `[#] GLOBAL_TAGS` button to top HUD. Built `<ManageTagsTerminal>` modal for creating tags with HTML5 color picker + neon presets, viewing global tags, and deleting tag entries.
+  - **Dynamic Card Tag Colors (`<TaskCard>`)**: `<TaskCard>` dynamically matches task tags to global hashtags to apply custom tag text, border, and glow colors.
+
+---
+
+## [1.14.0] - 2026-08-01
+
+### Added
+- **Phase 2: Temporal Datelines & Tag Pill UI Upgrade**:
+  - **Task Card Tag Pills & Temporal HUD (`<TaskCard>`)**: Added tag pill container with specialized Cyberpunk styling (`#bug` in neon red, standard tags in neon cyan) and temporal dateline metrics (`START_DATE`, `SCHEDULED_DATE`, `DUE_DATE`).
+  - **Terminal Date Pickers & Tag Input System (`<CreateTaskTerminal>` & `<EditTaskTerminal>`)**:
+    - Cyberpunk HTML5 `<input type="date">` fields for temporal tracking metrics.
+    - Interactive tag input (`> INPUT_TAG`) with `Enter` key handling isolated from form submission.
+    - Removable tag pills (`[x]`) and HTML `<datalist>` autocomplete connected to global hashtags registry (`getHashtags()`).
+
+---
+
+## [1.13.0] - 2026-08-01
+
+### Added
+- **Phase 1: Temporal Tracking & Global Hashtags Data Layer**:
+  - **Temporal Tracking Fields (`Task` Model & DB)**: Added `created_date` (datetime), `start_date` (date), `scheduled_date` (date), `due_date` (date), and `completed_date` (date) to `Task` SQLModel with automated SQLite migration checks and `created_date` back-filling.
+  - **Global Hashtag Registry**: Created `Hashtag` SQLModel table (`id`, `name`) and added `tags_json` array storage to `Task` model.
+  - **Backend API Endpoints**: Added `GET /api/hashtags` and `POST /api/hashtags` endpoints. Updated `POST /api/tasks` and `PUT/PATCH /api/tasks/{task_id}` for date and tag parsing. Updated `GET /api/logs` to serialize explicit ISO-8601 timestamps.
+  - **Frontend Types & Client**: Added `Hashtag` interface, updated `Task` and `CreateTaskPayload` types, and added `getHashtags()` and `createHashtag()` API client methods.
+
+---
+
 ## [1.12.0] - 2026-08-01
 
 ### Added

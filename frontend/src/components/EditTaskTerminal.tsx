@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Save, ChevronDown } from 'lucide-react'
-import type { Task } from '../types'
-import type { StatusItem } from '../api/client'
+import { X, Save, ChevronDown, Tag, Calendar, Trash2 } from 'lucide-react'
+import type { Task, Hashtag } from '../types'
+import { getHashtags, createHashtag, deleteTask, type StatusItem } from '../api/client'
+import { parseApiError } from '../utils/errorParser'
 
 const PRIORITIES = ['HIGH', 'MEDIUM', 'LOW'] as const
 const DEFAULT_STATUSES: string[] = ['To Do', 'In Progress', 'Review', 'Done']
@@ -11,17 +12,30 @@ interface EditTaskTerminalProps {
   task: Task | null
   onClose: () => void
   onSave: (updatedTask: Task) => Promise<void> | void
+  onDeleted?: (taskId: number) => void
   categories?: string[]
   statuses?: StatusItem[]
 }
 
-export default function EditTaskTerminal({ task, onClose, onSave, categories, statuses }: EditTaskTerminalProps) {
+export default function EditTaskTerminal({ task, onClose, onSave, onDeleted, categories, statuses }: EditTaskTerminalProps) {
   const availableCategories = categories && categories.length > 0 ? categories : DEFAULT_CATEGORIES
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState(task?.description || '')
   const [note, setNote] = useState(task?.note || '')
   const [category, setCategory] = useState<string>(task?.category || 'General')
+
+  // Temporal Date States
+  const [startDate, setStartDate] = useState(task?.start_date || '')
+  const [scheduledDate, setScheduledDate] = useState(task?.scheduled_date || '')
+  const [dueDate, setDueDate] = useState(task?.due_date || '')
+  const [completedDate, setCompletedDate] = useState(task?.completed_date || '')
+
+  // Tag System States
+  const [tags, setTags] = useState<string[]>(task?.tags || [])
+  const [currentTag, setCurrentTag] = useState('')
+  const [globalHashtags, setGlobalHashtags] = useState<Hashtag[]>([])
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
 
   const laneStatuses = statuses
     ? statuses.filter((s) => s.swimlane_name === category).map((s) => s.name)
@@ -32,9 +46,30 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
   const [priority, setPriority] = useState<string>('MEDIUM')
   const [progress, setProgress] = useState<number>(0)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<string[]>([])
 
   const titleRef = useRef<HTMLInputElement>(null)
+  const tagDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Fetch global tags when modal opens
+  useEffect(() => {
+    if (task) {
+      getHashtags()
+        .then(setGlobalHashtags)
+        .catch((err) => console.error('Failed to load global hashtags:', err))
+    }
+  }, [task])
 
   // Populate state when task prop changes or modal opens
   useEffect(() => {
@@ -46,12 +81,26 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
       setPriority(task.priority || 'MEDIUM')
       setCategory(task.category || 'General')
       setProgress(Math.round(task.progress_percentage || 0))
-      setError(null)
+      setStartDate(task.start_date || '')
+      setScheduledDate(task.scheduled_date || '')
+      setDueDate(task.due_date || '')
+      setCompletedDate(task.completed_date || '')
+      setTags(task.tags || [])
+      setCurrentTag('')
+      setIsDropdownOpen(false)
+      setErrors([])
 
       const timer = setTimeout(() => titleRef.current?.focus(), 50)
       return () => clearTimeout(timer)
     }
   }, [task])
+
+  // Smart progress override: snap progress to 100% when status becomes "Done"
+  useEffect(() => {
+    if (status && status.toUpperCase() === 'DONE') {
+      setProgress(100)
+    }
+  }, [status])
 
   // Close on Escape key
   useEffect(() => {
@@ -63,32 +112,68 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
     return () => document.removeEventListener('keydown', handleKey)
   }, [task, onClose])
 
+  // Tag addition handler
+  const handleAddTag = async (overrideTag?: string) => {
+    const rawTag = overrideTag !== undefined ? overrideTag : currentTag
+    const trimmed = rawTag.trim()
+    if (!trimmed) return
+
+    const formattedTag = trimmed.startsWith('#') ? trimmed : `#${trimmed}`
+    if (!tags.includes(formattedTag)) {
+      setTags((prev) => [...prev, formattedTag])
+      try {
+        await createHashtag(formattedTag)
+      } catch {
+        // Ignore registry duplicate or network error
+      }
+    }
+    setCurrentTag('')
+    setIsDropdownOpen(false)
+  }
+
+  const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      handleAddTag()
+    }
+  }
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags((prev) => prev.filter((t) => t !== tagToRemove))
+  }
+
+  // Filtered matching tags for custom dropdown (shows all if input empty)
+  const filteredSuggestions = globalHashtags.filter((h) => {
+    const isAlreadyAdded = tags.includes(h.name)
+    if (isAlreadyAdded) return false
+    if (!currentTag.trim()) return true
+    return h.name.toLowerCase().includes(currentTag.trim().toLowerCase())
+  })
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!task) return
 
     const trimmedTitle = title.trim()
     if (!trimmedTitle) {
-      setError('[ERR] > title_field_required')
+      setErrors(['[ERR_FIELD: TITLE] > TITLE FIELD REQUIRED'])
       return
     }
 
     const validProgress = Math.max(0, Math.min(100, Number(progress) || 0))
 
     setSubmitting(true)
-    setError(null)
+    setErrors([])
 
-    let finalProgress = validProgress
+    const finalProgress = validProgress
     let prevProgress = task.previous_progress
+    let finalCompletedDate = completedDate || null
 
-    // Progress memory sync logic if status is changed to or from Done
-    if (status === 'Done' && task.status !== 'Done') {
-      prevProgress = Math.round(task.progress_percentage)
-      finalProgress = 100
-    } else if (task.status === 'Done' && status !== 'Done') {
-      // If moving out of Done, restore previous_progress or user-entered progress
-      if (validProgress === 100) {
-        finalProgress = task.previous_progress ?? 0
+    // Date memory sync logic for Done status
+    if (status.toUpperCase() === 'DONE') {
+      if (!finalCompletedDate) {
+        finalCompletedDate = new Date().toISOString().split('T')[0]
       }
     }
 
@@ -102,14 +187,38 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
       category,
       progress_percentage: finalProgress,
       previous_progress: prevProgress,
+      start_date: startDate || null,
+      scheduled_date: scheduledDate || null,
+      due_date: dueDate || null,
+      completed_date: finalCompletedDate,
+      tags: tags,
     }
 
     try {
       await onSave(updatedTask)
       onClose()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      setError(`[ERR_UPDATE] > ${message}`)
+      const parsed = parseApiError(err)
+      setErrors(parsed)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDeleteTask = async () => {
+    if (!task) return
+    setSubmitting(true)
+    setErrors([])
+
+    try {
+      await deleteTask(task.id)
+      onClose()
+      if (onDeleted) {
+        onDeleted(task.id)
+      }
+    } catch (err: unknown) {
+      const parsed = parseApiError(err)
+      setErrors(parsed)
     } finally {
       setSubmitting(false)
     }
@@ -127,7 +236,7 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
       aria-label="Edit task terminal"
     >
       {/* ── Terminal Window ─────────────────────────────── */}
-      <div className="cyber-chamfer relative mx-4 w-full max-w-lg border border-cyber-border bg-void-card shadow-2xl">
+      <div className="cyber-chamfer relative mx-4 w-full max-w-xl border border-cyber-border bg-void-card shadow-2xl max-h-[90vh] overflow-y-auto">
 
         {/* Corner accents */}
         <div className="pointer-events-none absolute top-0 left-0 h-3 w-3 border-t-2 border-l-2 border-neon-cyan" />
@@ -136,7 +245,7 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
         <div className="pointer-events-none absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-neon-cyan" />
 
         {/* ── Title bar ──────────────────────────────────── */}
-        <div className="flex items-center justify-between border-b border-cyber-border px-4 py-2.5">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-cyber-border bg-void-card/95 px-4 py-2.5 backdrop-blur-md">
           {/* Traffic light dots */}
           <div className="flex items-center gap-2">
             <div className="flex gap-1.5">
@@ -318,6 +427,165 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
             </div>
           </div>
 
+          {/* Temporal Date Pickers Grid */}
+          <div className="border-t border-cyber-border/60 pt-3">
+            <span className="mb-2 block font-label text-[10px] uppercase tracking-[0.2em] text-neon-cyan flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> TEMPORAL_DATELINE_METRICS
+            </span>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {/* Start Date */}
+              <div>
+                <label
+                  htmlFor="edit-task-start-date"
+                  className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-fg-muted"
+                >
+                  START_DATE
+                </label>
+                <input
+                  id="edit-task-start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="cyber-chamfer-sm w-full border border-cyber-border bg-void py-1.5 px-2.5 font-mono text-xs text-neon-cyan transition-all duration-200 focus:border-neon-cyan focus:outline-none focus:shadow-[0_0_8px_#00d4ff30]"
+                />
+              </div>
+
+              {/* Scheduled Date */}
+              <div>
+                <label
+                  htmlFor="edit-task-scheduled-date"
+                  className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-fg-muted"
+                >
+                  SCHEDULED_DATE
+                </label>
+                <input
+                  id="edit-task-scheduled-date"
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  className="cyber-chamfer-sm w-full border border-cyber-border bg-void py-1.5 px-2.5 font-mono text-xs text-neon-amber transition-all duration-200 focus:border-neon-amber focus:outline-none focus:shadow-[0_0_8px_#ffb00030]"
+                />
+              </div>
+
+              {/* Due Date */}
+              <div>
+                <label
+                  htmlFor="edit-task-due-date"
+                  className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-fg-muted"
+                >
+                  DUE_DATE
+                </label>
+                <input
+                  id="edit-task-due-date"
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="cyber-chamfer-sm w-full border border-cyber-border bg-void py-1.5 px-2.5 font-mono text-xs text-neon-red transition-all duration-200 focus:border-neon-red focus:outline-none focus:shadow-[0_0_8px_#ff336630]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Tag Input System */}
+          <div className="border-t border-cyber-border/60 pt-3">
+            <label
+              htmlFor="edit-task-tag-input"
+              className="mb-1.5 block font-label text-[10px] uppercase tracking-[0.2em] text-neon-cyan flex items-center gap-1"
+            >
+              <Tag className="h-3 w-3" /> {'>'} INPUT_TAG (Hit Enter to add)
+            </label>
+
+            <div className="relative flex items-center gap-2">
+              <div ref={tagDropdownRef} className="relative flex-1">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-neon-cyan/60 z-10">
+                  {'>'}
+                </span>
+                <input
+                  id="edit-task-tag-input"
+                  type="text"
+                  value={currentTag}
+                  onChange={(e) => {
+                    setCurrentTag(e.target.value)
+                    setIsDropdownOpen(true)
+                  }}
+                  onFocus={() => setIsDropdownOpen(true)}
+                  onKeyDown={handleTagKeyDown}
+                  placeholder="type_hashtag (e.g. #bug, #feature)..."
+                  className="cyber-chamfer-sm w-full border border-cyber-border bg-void py-2 pl-8 pr-10 font-mono text-xs text-neon-cyan placeholder:text-fg-muted/40 transition-all duration-200 focus:border-neon-cyan focus:outline-none focus:shadow-[0_0_8px_#00d4ff30]"
+                />
+
+                {/* Dropdown Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsDropdownOpen((prev) => !prev)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] font-bold text-neon-cyan/80 hover:text-neon-cyan hover:shadow-[0_0_8px_#00d4ff50] px-1 py-0.5 transition-all focus:outline-none"
+                  title="Toggle global hashtags menu"
+                >
+                  [▼]
+                </button>
+
+                {/* Custom Cyberpunk Autocomplete Dropdown */}
+                {isDropdownOpen && filteredSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-none border border-neon-cyan bg-void-card shadow-[0_0_10px_rgba(0,212,255,0.2)] max-h-48 overflow-y-auto">
+                    {filteredSuggestions.map((suggestion) => {
+                      const hex = suggestion.color || '#00d4ff'
+                      return (
+                        <div
+                          key={suggestion.id}
+                          onClick={() => handleAddTag(suggestion.name)}
+                          className="flex items-center justify-between px-3 py-2 border-b border-cyber-border/60 last:border-0 font-mono text-xs cursor-pointer transition-all hover:bg-neon-cyan/20 hover:text-neon-cyan text-fg"
+                        >
+                          <span className="font-bold" style={{ color: hex }}>
+                            {suggestion.name}
+                          </span>
+                          <span className="text-[10px] text-fg-muted uppercase tracking-wider">
+                            [SELECT]
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleAddTag()}
+                className="cyber-chamfer-sm shrink-0 border border-neon-cyan/60 bg-neon-cyan/10 px-3 py-2 font-mono text-xs font-semibold uppercase tracking-wider text-neon-cyan hover:bg-neon-cyan hover:text-void transition-colors"
+              >
+                [ADD]
+              </button>
+            </div>
+
+            {/* Removable Tag Pills */}
+            {tags.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {tags.map((tag) => {
+                  const isBug = tag.toLowerCase() === '#bug' || tag.toLowerCase() === 'bug'
+                  const style = isBug
+                    ? 'border-neon-red/60 text-neon-red bg-neon-red/10'
+                    : 'border-neon-cyan/60 text-neon-cyan bg-neon-cyan/10'
+                  return (
+                    <span
+                      key={tag}
+                      className={`cyber-chamfer-sm inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-xs uppercase tracking-wider ${style}`}
+                    >
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTag(tag)}
+                        className="hover:opacity-75 focus:outline-none"
+                        title="Remove tag"
+                      >
+                        [x]
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Progress Percentage Input */}
           <div>
             <div className="mb-1.5 flex items-center justify-between font-label text-[10px] uppercase tracking-[0.2em] text-fg-muted">
@@ -355,29 +623,47 @@ export default function EditTaskTerminal({ task, onClose, onSave, categories, st
             </div>
           </div>
 
-          {/* Error message */}
-          {error && (
-            <div className="font-label text-xs uppercase tracking-wider text-neon-red">
-              {error}
+          {/* Parsed Cyberpunk Terminal Error Alerts */}
+          {errors.length > 0 && (
+            <div className="space-y-1 rounded-none border border-neon-red/60 bg-neon-red/10 p-2.5 font-mono text-xs text-neon-red shadow-[0_0_8px_#ff336630]">
+              {errors.map((errStr, idx) => (
+                <div key={idx} className="flex items-center gap-1.5 font-bold tracking-wide">
+                  <span>{errStr}</span>
+                </div>
+              ))}
             </div>
           )}
 
           {/* Action buttons */}
-          <div className="flex items-center gap-3 border-t border-cyber-border pt-4">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="cyber-chamfer-sm flex items-center gap-2 border-2 border-neon-cyan bg-neon-cyan/10 px-5 py-2.5 font-label text-xs font-semibold uppercase tracking-[0.2em] text-neon-cyan transition-all duration-200 hover:bg-neon-cyan hover:text-void hover:shadow-[0_0_10px_#00d4ff,0_0_20px_#00d4ff60] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-cyan focus-visible:ring-offset-2 focus-visible:ring-offset-void-card disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Save className="h-3.5 w-3.5" />
-              {submitting ? 'saving...' : 'update_node'}
-            </button>
+          <div className="flex items-center justify-between border-t border-cyber-border pt-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="cyber-chamfer-sm flex items-center gap-2 border-2 border-neon-cyan bg-neon-cyan/10 px-5 py-2.5 font-label text-xs font-semibold uppercase tracking-[0.2em] text-neon-cyan transition-all duration-200 hover:bg-neon-cyan hover:text-void hover:shadow-[0_0_10px_#00d4ff,0_0_20px_#00d4ff60] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-cyan focus-visible:ring-offset-2 focus-visible:ring-offset-void-card disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {submitting ? 'saving...' : 'update_node'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="cyber-chamfer-sm border border-cyber-border px-5 py-2.5 font-label text-xs uppercase tracking-[0.2em] text-fg-muted transition-all duration-200 hover:border-fg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-cyan focus-visible:ring-offset-2 focus-visible:ring-offset-void-card"
+              >
+                abort
+              </button>
+            </div>
+
+            {/* Critical Delete / Purge Node Button */}
             <button
               type="button"
-              onClick={onClose}
-              className="cyber-chamfer-sm border border-cyber-border px-5 py-2.5 font-label text-xs uppercase tracking-[0.2em] text-fg-muted transition-all duration-200 hover:border-neon-red/50 hover:text-neon-red focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-cyan focus-visible:ring-offset-2 focus-visible:ring-offset-void-card"
+              disabled={submitting}
+              onClick={handleDeleteTask}
+              className="cyber-chamfer-sm flex items-center gap-1.5 border border-neon-red/60 bg-neon-red/10 px-4 py-2.5 font-label text-xs font-semibold uppercase tracking-[0.15em] text-neon-red shadow-[0_0_8px_rgba(239,68,68,0.2)] transition-all duration-200 hover:bg-neon-red hover:text-void hover:shadow-[0_0_14px_#ff3366] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-red focus-visible:ring-offset-2 focus-visible:ring-offset-void-card disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              title="Permanently purge task node from board"
             >
-              abort
+              <Trash2 className="h-3.5 w-3.5" />
+              [❌ PURGE_NODE]
             </button>
           </div>
         </form>

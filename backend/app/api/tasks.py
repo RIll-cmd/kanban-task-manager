@@ -1,14 +1,18 @@
+import json
 from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.database import get_session
 from app.models import ActivityLog, Subtask, Task
 from app.schemas.task import (
+    ActivityLogRead,
     SubtaskCreate,
     SubtaskRead,
     SubtaskUpdate,
     TaskCreate,
+    TaskDuplicatePayload,
     TaskReadWithProgress,
     TaskUpdate,
 )
@@ -16,10 +20,11 @@ from app.schemas.task import (
 router = APIRouter()
 
 
-@router.get("/logs")
+@router.get("/logs", response_model=List[ActivityLogRead])
 def read_activity_logs(
     session: Session = Depends(get_session),
 ):
+    """Return top 50 activity logs with explicit ISO-8601 timestamps."""
     statement = select(ActivityLog).order_by(ActivityLog.timestamp.desc()).limit(50)
     return session.exec(statement).all()
 
@@ -29,7 +34,12 @@ def create_task(
     task_data: TaskCreate,
     session: Session = Depends(get_session),
 ):
-    db_task = Task.model_validate(task_data)
+    # Extract tags before model_validate (tags is not a direct DB column)
+    incoming_tags: List[str] = task_data.tags or []
+    create_dict = task_data.model_dump(exclude={"tags"})
+
+    db_task = Task.model_validate(create_dict)
+    db_task.tags_json = json.dumps(incoming_tags)
     session.add(db_task)
     session.commit()
     session.refresh(db_task)
@@ -100,6 +110,11 @@ def update_task(
         old_progress = int(round((completed / len(db_task.subtasks)) * 100))
 
     update_data = task_update.model_dump(exclude_unset=True)
+
+    # Handle tags separately — they go through the JSON column
+    incoming_tags = update_data.pop("tags", None)
+    if incoming_tags is not None:
+        db_task.tags_json = json.dumps(incoming_tags)
 
     # Apply attribute updates
     for key, value in update_data.items():
@@ -227,3 +242,83 @@ def update_subtask(
     session.refresh(db_subtask)
 
     return db_subtask
+
+
+@router.post("/tasks/{task_id}/duplicate", response_model=TaskReadWithProgress, status_code=status.HTTP_201_CREATED)
+def duplicate_task(
+    task_id: int,
+    payload: TaskDuplicatePayload,
+    session: Session = Depends(get_session),
+):
+    print(f"[DPL_BACKEND] Received duplication request for task_id={task_id}: category='{payload.category}', status='{payload.status}'")
+    source_task = session.get(Task, task_id)
+    if not source_task:
+        print(f"[DPL_BACKEND_ERR] Source task #{task_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task with ID {task_id} not found",
+        )
+
+    # Compute target progress snapshot
+    source_progress = getattr(source_task, "previous_progress", 0) or 0
+    target_progress = 100 if (payload.status and payload.status.upper() == "DONE") else source_progress
+
+    new_task = Task(
+        title=source_task.title,
+        description=source_task.description,
+        note=source_task.note,
+        priority=source_task.priority,
+        category=payload.category,
+        status=payload.status,
+        previous_progress=target_progress,
+        start_date=source_task.start_date,
+        scheduled_date=source_task.scheduled_date,
+        due_date=source_task.due_date,
+        completed_date=source_task.completed_date,
+        tags_json=source_task.tags_json,
+    )
+    session.add(new_task)
+    session.commit()
+    session.refresh(new_task)
+
+    print(f"[DPL_BACKEND_SUCCESS] Created duplicated task record #{new_task.id} in '{new_task.category}' -> '{new_task.status}'")
+
+    log = ActivityLog(
+        action="Task Duplicated",
+        details=f"Duplicated task '{source_task.title}' (#{source_task.id}) into '{new_task.category}' -> '{new_task.status}'",
+        description=f"Snapshot duplicate generated for #{new_task.id}",
+        task_title=new_task.title,
+        task_id=new_task.id,
+    )
+    session.add(log)
+    session.commit()
+    session.refresh(new_task)
+
+    return new_task
+
+
+@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task(
+    task_id: int,
+    session: Session = Depends(get_session),
+):
+    db_task = session.get(Task, task_id)
+    if not db_task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task with ID {task_id} not found",
+        )
+
+    task_title = db_task.title
+    session.delete(db_task)
+
+    log = ActivityLog(
+        action="Task Deleted",
+        details=f"Task '{task_title}' (#{task_id}) was purged",
+        description=f"Task #{task_id} deleted from system",
+        task_title=task_title,
+    )
+    session.add(log)
+    session.commit()
+    return None
+

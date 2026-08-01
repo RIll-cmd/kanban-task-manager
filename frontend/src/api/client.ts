@@ -1,6 +1,8 @@
-import type { Task, ActivityLog } from '../types'
+import type { Task, ActivityLog, Hashtag } from '../types'
 
-const API_BASE = 'http://127.0.0.1:8000/api'
+// Use localhost (not 127.0.0.1) to align with the Vite dev server origin.
+// Browsers treat 'localhost' and '127.0.0.1' as distinct origins for CORS.
+const API_BASE = 'http://localhost:8000/api'
 
 /**
  * Fetch all tasks from the backend.
@@ -27,6 +29,11 @@ export interface CreateTaskPayload {
   priority?: string
   category?: string
   note?: string | null
+  start_date?: string | null
+  scheduled_date?: string | null
+  due_date?: string | null
+  completed_date?: string | null
+  tags?: string[]
 }
 
 /**
@@ -65,6 +72,38 @@ export async function updateTask(taskId: number, updates: Partial<Task>): Promis
   }
 
   return response.json() as Promise<Task>
+}
+
+/**
+ * Duplicate a task snapshot to a new category (swimlane) & status.
+ */
+export async function duplicateTask(taskId: number, category: string, status: string): Promise<Task> {
+  const response = await fetch(`${API_BASE}/tasks/${taskId}/duplicate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category, status }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    throw new Error(`Failed to duplicate task ${taskId}: ${response.status} ${response.statusText} ${errorBody}`)
+  }
+
+  return response.json() as Promise<Task>
+}
+
+/**
+ * Delete a task by ID.
+ */
+export async function deleteTask(taskId: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    throw new Error(`Failed to delete task ${taskId}: ${response.status} ${response.statusText} ${errorBody}`)
+  }
 }
 
 export interface Swimlane {
@@ -107,16 +146,17 @@ export interface Swimlane {
   id: number
   name: string
   order?: number
+  color?: string
 }
 
 /**
- * Rename an existing swimlane and bulk update associated tasks.
+ * Rename/update an existing swimlane and bulk update associated tasks.
  */
-export async function updateSwimlane(oldName: string, newName: string): Promise<Swimlane> {
+export async function updateSwimlane(oldName: string, newName: string, color?: string): Promise<Swimlane> {
   const response = await fetch(`${API_BASE}/swimlanes/${encodeURIComponent(oldName)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: newName, new_name: newName }),
+    body: JSON.stringify({ name: newName, new_name: newName, color }),
   })
 
   if (!response.ok) {
@@ -171,6 +211,7 @@ export interface StatusItem {
   swimlane_name: string
   order: number
   default_progress?: number | null
+  color?: string
 }
 
 /**
@@ -195,7 +236,8 @@ export async function getStatuses(swimlaneName?: string): Promise<StatusItem[]> 
 export async function createStatus(
   name: string,
   swimlaneName: string,
-  defaultProgress?: number | null
+  defaultProgress?: number | null,
+  color?: string
 ): Promise<StatusItem> {
   const response = await fetch(`${API_BASE}/statuses`, {
     method: 'POST',
@@ -204,6 +246,7 @@ export async function createStatus(
       name,
       swimlane_name: swimlaneName,
       default_progress: defaultProgress,
+      color: color || '#00ffff',
     }),
   })
 
@@ -216,13 +259,14 @@ export async function createStatus(
 }
 
 /**
- * Rename an existing status or update default_progress for a swimlane.
+ * Rename an existing status or update default_progress/color for a swimlane.
  */
 export async function updateStatus(
   oldName: string,
   newName: string,
   swimlaneName?: string,
-  defaultProgress?: number | null
+  defaultProgress?: number | null,
+  color?: string
 ): Promise<StatusItem> {
   const response = await fetch(`${API_BASE}/statuses/${encodeURIComponent(oldName)}`, {
     method: 'PUT',
@@ -232,6 +276,7 @@ export async function updateStatus(
       new_name: newName,
       swimlane_name: swimlaneName,
       default_progress: defaultProgress,
+      color,
     }),
   })
 
@@ -278,4 +323,54 @@ export async function getActivityLogs(): Promise<ActivityLog[]> {
 
   return response.json() as Promise<ActivityLog[]>
 }
+
+// ── Hashtag API ──
+
+/**
+ * Fetch all registered hashtags, sorted alphabetically.
+ */
+export async function getHashtags(): Promise<Hashtag[]> {
+  const response = await fetch(`${API_BASE}/hashtags`)
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch hashtags: ${response.status} ${response.statusText}`)
+  }
+
+  return response.json() as Promise<Hashtag[]>
+}
+
+/**
+ * Create (or update existing) a global hashtag with optional custom color.
+ */
+export async function createHashtag(name: string, color?: string): Promise<Hashtag> {
+  const response = await fetch(`${API_BASE}/hashtags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, color }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    throw new Error(`Failed to create hashtag: ${response.status} ${response.statusText} ${errorBody}`)
+  }
+
+  return response.json() as Promise<Hashtag>
+}
+
+/**
+ * Delete a global hashtag by ID.
+ */
+export async function deleteHashtag(id: number): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/hashtags/${id}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    throw new Error(`Failed to delete hashtag ${id}: ${response.status} ${response.statusText} ${errorBody}`)
+  }
+
+  return response.json() as Promise<{ message: string }>
+}
+
 

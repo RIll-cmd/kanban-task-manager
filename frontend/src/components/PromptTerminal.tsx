@@ -14,9 +14,12 @@ interface PromptTerminalProps {
   secondaryInitialValue?: string
   secondaryIsNumeric?: boolean
   secondaryAllowNoOverride?: boolean
+  colorInputLabel?: string
+  colorPlaceholder?: string
+  colorInitialValue?: string
   submitText?: string
   onCancel: () => void
-  onSubmit: (value: string, secondaryValue?: string) => void | Promise<void>
+  onSubmit: (value: string, secondaryValue?: string, colorValue?: string) => void | Promise<void>
 }
 
 export default function PromptTerminal({
@@ -32,12 +35,16 @@ export default function PromptTerminal({
   secondaryInitialValue = '',
   secondaryIsNumeric = false,
   secondaryAllowNoOverride = false,
+  colorInputLabel,
+  colorPlaceholder = '#00ffff',
+  colorInitialValue = '#00ffff',
   submitText = '[SUBMIT]',
   onCancel,
   onSubmit,
 }: PromptTerminalProps) {
   const [value, setValue] = useState('')
   const [secondaryValue, setSecondaryValue] = useState('')
+  const [colorValue, setColorValue] = useState('#00ffff')
   const [isNoOverride, setIsNoOverride] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -46,6 +53,7 @@ export default function PromptTerminal({
   useEffect(() => {
     if (isOpen) {
       setValue(initialValue)
+      setColorValue(colorInitialValue || '#00ffff')
       const isInitialNone =
         secondaryInitialValue === 'none' ||
         secondaryInitialValue === 'null' ||
@@ -58,7 +66,7 @@ export default function PromptTerminal({
       const timer = setTimeout(() => inputRef.current?.focus(), 50)
       return () => clearTimeout(timer)
     }
-  }, [isOpen, initialValue, secondaryInitialValue, secondaryAllowNoOverride])
+  }, [isOpen, initialValue, secondaryInitialValue, secondaryAllowNoOverride, colorInitialValue])
 
   // Close on Escape key
   useEffect(() => {
@@ -104,7 +112,7 @@ export default function PromptTerminal({
       }
     }
 
-    onSubmit(value.trim(), secValToSubmit)
+    onSubmit(value.trim(), secValToSubmit, colorInputLabel ? (colorValue.trim() || '#00ffff') : undefined)
   }
 
   if (!isOpen) return null
@@ -232,6 +240,34 @@ export default function PromptTerminal({
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Optional Color Hex Input */}
+          {colorInputLabel && (
+            <div className="space-y-1.5 pt-1">
+              <label className="block font-label text-xs uppercase tracking-[0.15em] text-fg-muted">
+                {colorInputLabel}
+              </label>
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-9 w-9 shrink-0 border border-cyber-border rounded-none shadow-sm transition-colors"
+                  style={{ backgroundColor: colorValue || '#00ffff' }}
+                  title="Active color accent preview"
+                />
+                <div className="relative w-full">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-neon-cyan">
+                    {'>'}
+                  </span>
+                  <input
+                    type="text"
+                    value={colorValue}
+                    onChange={(e) => setColorValue(e.target.value)}
+                    placeholder={colorPlaceholder || '#00ffff'}
+                    className="cyber-chamfer-sm w-full border border-cyber-border bg-void-muted py-2 pr-3 pl-8 font-mono text-sm text-fg placeholder:text-fg-muted/40 transition-all focus:border-neon-cyan focus:shadow-[0_0_8px_#00d4ff40] focus:outline-none uppercase"
+                  />
+                </div>
+              </div>
             </div>
           )}
 

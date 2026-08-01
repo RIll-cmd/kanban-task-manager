@@ -13,12 +13,14 @@ class SwimlaneCreate(BaseModel):
     name: str
     use_defaults: bool = True
     order: Optional[int] = None
+    color: Optional[str] = None
 
 
 class SwimlaneUpdate(BaseModel):
     name: Optional[str] = None
     new_name: Optional[str] = None
     order: Optional[int] = None
+    color: Optional[str] = None
 
 
 class SwimlaneReorderItem(BaseModel):
@@ -52,17 +54,17 @@ def create_swimlane(
     max_order = max([s.order for s in all_lanes], default=-1)
     new_order = data.order if data.order is not None else max_order + 1
 
-    swimlane = Swimlane(name=name, order=new_order)
+    swimlane = Swimlane(name=name, order=new_order, color=data.color or "#00ffff")
     session.add(swimlane)
     session.commit()
     session.refresh(swimlane)
 
     if data.use_defaults:
         default_statuses = [
-            {"name": "To Do", "order": 0, "default_progress": 0, "swimlane_name": swimlane.name},
-            {"name": "In Progress", "order": 1, "default_progress": 50, "swimlane_name": swimlane.name},
-            {"name": "Review", "order": 2, "default_progress": 80, "swimlane_name": swimlane.name},
-            {"name": "Done", "order": 3, "default_progress": 100, "swimlane_name": swimlane.name},
+            {"name": "To Do", "order": 0, "default_progress": 0, "swimlane_name": swimlane.name, "color": "#00ffff"},
+            {"name": "In Progress", "order": 1, "default_progress": 50, "swimlane_name": swimlane.name, "color": "#ffaa00"},
+            {"name": "Review", "order": 2, "default_progress": 80, "swimlane_name": swimlane.name, "color": "#ff00ff"},
+            {"name": "Done", "order": 3, "default_progress": 100, "swimlane_name": swimlane.name, "color": "#00ff88"},
         ]
         for item in default_statuses:
             session.add(Status(**item))
@@ -114,12 +116,15 @@ def update_swimlane(
         else:
             all_lanes = session.exec(select(Swimlane)).all()
             max_order = max([s.order for s in all_lanes], default=-1)
-            swimlane = Swimlane(name=target_new_name, order=max_order + 1)
+            swimlane = Swimlane(name=target_new_name, order=max_order + 1, color=payload.color if payload and payload.color else "#00ffff")
             session.add(swimlane)
     else:
         swimlane.name = target_new_name
-        if payload and payload.order is not None:
-            swimlane.order = payload.order
+        if payload:
+            if payload.order is not None:
+                swimlane.order = payload.order
+            if payload.color is not None:
+                swimlane.color = payload.color
         session.add(swimlane)
 
     # Bulk update tasks and status columns so they aren't orphaned
