@@ -16,6 +16,14 @@ from app.schemas.task import (
 router = APIRouter()
 
 
+@router.get("/logs")
+def read_activity_logs(
+    session: Session = Depends(get_session),
+):
+    statement = select(ActivityLog).order_by(ActivityLog.timestamp.desc()).limit(50)
+    return session.exec(statement).all()
+
+
 @router.post("/tasks", response_model=TaskReadWithProgress, status_code=status.HTTP_201_CREATED)
 def create_task(
     task_data: TaskCreate,
@@ -30,6 +38,8 @@ def create_task(
     log = ActivityLog(
         action="Task Created",
         details=f"Task '{db_task.title}' was created",
+        description=f"Initiated task in '{db_task.category}'",
+        task_title=db_task.title,
         task_id=db_task.id,
     )
     session.add(log)
@@ -62,6 +72,7 @@ def read_task(
     return db_task
 
 
+@router.put("/tasks/{task_id}", response_model=TaskReadWithProgress)
 @router.patch("/tasks/{task_id}", response_model=TaskReadWithProgress)
 def update_task(
     task_id: int,
@@ -75,29 +86,22 @@ def update_task(
             detail=f"Task with ID {task_id} not found",
         )
 
+    # Capture old state BEFORE applying updates
+    old_status = db_task.status
+    old_note = db_task.note or ""
+
+    # Calculate old progress
+    if db_task.status == "Done":
+        old_progress = 100
+    elif not db_task.subtasks:
+        old_progress = db_task.previous_progress or 0
+    else:
+        completed = sum(1 for s in db_task.subtasks if s.is_completed)
+        old_progress = int(round((completed / len(db_task.subtasks)) * 100))
+
     update_data = task_update.model_dump(exclude_unset=True)
 
-    # CRITICAL AUTOMATION TRIGGER: Automatically log status or description changes
-    if "status" in update_data and update_data["status"] != db_task.status:
-        old_status = db_task.status
-        new_status = update_data["status"]
-        log = ActivityLog(
-            action="Status Change",
-            details=f"Moved from '{old_status}' to '{new_status}'",
-            task_id=db_task.id,
-        )
-        session.add(log)
-
-    if "description" in update_data and update_data["description"] != db_task.description:
-        old_desc = db_task.description or ""
-        new_desc = update_data["description"] or ""
-        log = ActivityLog(
-            action="Description Change",
-            details=f"Updated description from '{old_desc}' to '{new_desc}'",
-            task_id=db_task.id,
-        )
-        session.add(log)
-
+    # Apply attribute updates
     for key, value in update_data.items():
         setattr(db_task, key, value)
 
@@ -105,6 +109,56 @@ def update_task(
     session.commit()
     session.refresh(db_task)
 
+    # Calculate new progress AFTER updates applied
+    if db_task.status == "Done":
+        new_progress = 100
+    elif not db_task.subtasks:
+        new_progress = db_task.previous_progress or 0
+    else:
+        completed = sum(1 for s in db_task.subtasks if s.is_completed)
+        new_progress = int(round((completed / len(db_task.subtasks)) * 100))
+
+    new_status = db_task.status
+    new_note = db_task.note or ""
+
+    # 1. Status change log
+    if "status" in update_data and old_status != new_status:
+        session.add(
+            ActivityLog(
+                action="Status Change",
+                details=f"Moved from '{old_status}' to '{new_status}'",
+                description=f"Moved to '{new_status}'",
+                task_title=db_task.title,
+                task_id=db_task.id,
+            )
+        )
+
+    # 2. Progress change log
+    if old_progress != new_progress or ("previous_progress" in update_data and update_data["previous_progress"] != old_progress):
+        session.add(
+            ActivityLog(
+                action="Progress Update",
+                details=f"Progress updated to {new_progress}%",
+                description=f"Progress updated to {new_progress}%",
+                task_title=db_task.title,
+                task_id=db_task.id,
+            )
+        )
+
+    # 3. Note update log
+    if "note" in update_data and old_note != new_note and new_note.strip() != "":
+        session.add(
+            ActivityLog(
+                action="Note Update",
+                details="Updated note",
+                description="Updated note",
+                task_title=db_task.title,
+                task_id=db_task.id,
+            )
+        )
+
+    session.commit()
+    session.refresh(db_task)
     return db_task
 
 

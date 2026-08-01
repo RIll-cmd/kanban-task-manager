@@ -1,0 +1,1133 @@
+import { useEffect, useState, useCallback } from 'react'
+import {
+  KanbanSquare,
+  Loader2,
+  Terminal,
+  Wifi,
+  Plus,
+  Edit3,
+  Trash2,
+  GripVertical,
+  SlidersHorizontal,
+  Eye,
+  ListFilter,
+  X,
+} from 'lucide-react'
+import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd'
+import {
+  getTasks,
+  updateTask,
+  getSwimlanes,
+  createSwimlane,
+  updateSwimlane,
+  reorderSwimlanes,
+  deleteSwimlane,
+  getStatuses,
+  createStatus,
+  updateStatus,
+  deleteStatus,
+  getActivityLogs,
+  type Swimlane,
+  type StatusItem,
+} from './api/client'
+import TaskCard from './components/TaskCard'
+import CreateTaskTerminal from './components/CreateTaskTerminal'
+import EditTaskTerminal from './components/EditTaskTerminal'
+import SwimlaneCreationTerminal from './components/SwimlaneCreationTerminal'
+import ConfirmTerminal from './components/ConfirmTerminal'
+import PromptTerminal from './components/PromptTerminal'
+import type { Task, ActivityLog } from './types'
+
+const COLOR_PALETTE = [
+  { color: 'bg-neon-green', glowClass: 'neon-glow-green' },
+  { color: 'bg-neon-cyan', glowClass: 'neon-glow-cyan' },
+  { color: 'bg-neon-magenta', glowClass: 'neon-glow-magenta' },
+  { color: 'bg-neon-amber', glowClass: 'neon-glow-amber' },
+]
+
+function App() {
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [swimlanes, setSwimlanes] = useState<Swimlane[]>([])
+  const [statuses, setStatuses] = useState<StatusItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [showTerminal, setShowTerminal] = useState(false)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [isSwimlaneModalOpen, setIsSwimlaneModalOpen] = useState(false)
+  const [sortMode, setSortMode] = useState<'custom' | 'volume' | 'az'>('custom')
+  const [isMinimalHUD, setIsMinimalHUD] = useState(false)
+  const [isLogOpen, setIsLogOpen] = useState(false)
+  const [logs, setLogs] = useState<ActivityLog[]>([])
+
+  const fetchActivityLogs = async () => {
+    try {
+      const fetched = await getActivityLogs()
+      setLogs(fetched)
+    } catch (err: unknown) {
+      console.error('Failed to fetch activity logs', err)
+    }
+  }
+
+  // Universal Modals State
+  const [promptConfig, setPromptConfig] = useState<{
+    isOpen: boolean
+    title: string
+    message?: string
+    inputLabel?: string
+    placeholder?: string
+    initialValue?: string
+    isNumeric?: boolean
+    secondaryInputLabel?: string
+    secondaryPlaceholder?: string
+    secondaryInitialValue?: string
+    secondaryIsNumeric?: boolean
+    secondaryAllowNoOverride?: boolean
+    submitText?: string
+    onSubmit: (val: string, secVal?: string) => void
+  }>({
+    isOpen: false,
+    title: '',
+    onSubmit: () => {},
+  })
+
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    confirmText?: string
+    onConfirm: () => void
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  })
+
+  const openPrompt = (config: Omit<typeof promptConfig, 'isOpen'>) => {
+    setPromptConfig({ ...config, isOpen: true })
+  }
+
+  const closePrompt = () => {
+    setPromptConfig((prev) => ({ ...prev, isOpen: false }))
+  }
+
+  const openConfirm = (config: Omit<typeof confirmConfig, 'isOpen'>) => {
+    setConfirmConfig({ ...config, isOpen: true })
+  }
+
+  const closeConfirm = () => {
+    setConfirmConfig((prev) => ({ ...prev, isOpen: false }))
+  }
+
+  const swimlaneNames = Array.from(
+    new Set([
+      ...swimlanes.map((s) => s.name),
+      ...tasks.map((t) => t.category || 'General'),
+    ])
+  )
+
+  const sortedSwimlaneNames = [...swimlaneNames].sort((a, b) => {
+    if (sortMode === 'az') {
+      return a.localeCompare(b)
+    }
+    if (sortMode === 'volume') {
+      const countA = tasks.filter((t) => (t.category || 'General') === a).length
+      const countB = tasks.filter((t) => (t.category || 'General') === b).length
+      return countB - countA
+    }
+    // 'custom' order
+    const objA = swimlanes.find((s) => s.name === a)
+    const objB = swimlanes.find((s) => s.name === b)
+    return (objA?.order ?? 0) - (objB?.order ?? 0)
+  })
+
+  const handleTaskCreated = useCallback((newTask: Task) => {
+    setTasks((prev) => [...prev, newTask])
+  }, [])
+
+  useEffect(() => {
+    Promise.all([getTasks(), getSwimlanes(), getStatuses()])
+      .then(([fetchedTasks, fetchedSwimlanes, fetchedStatuses]) => {
+        setTasks(fetchedTasks)
+        setSwimlanes(fetchedSwimlanes)
+        setStatuses(fetchedStatuses)
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        setError(message)
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSwimlaneSubmit = async (name: string, useDefaults: boolean) => {
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+
+    try {
+      const newLane = await createSwimlane(trimmedName, useDefaults)
+      setSwimlanes((prev) => [...prev.filter((s) => s.name !== newLane.name), newLane])
+
+      // Re-fetch statuses so newly generated columns render instantly
+      const updatedStatuses = await getStatuses()
+      setStatuses(updatedStatuses)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create swimlane'
+      setError(`[ERR_CREATE_SWIMLANE] > ${message}`)
+    }
+  }
+
+  const handleEditSwimlane = (oldName: string) => {
+    openPrompt({
+      title: 'RENAME_SWIMLANE',
+      message: `Rename swimlane '${oldName}'. Linked tasks and columns will be updated.`,
+      inputLabel: 'NEW_SWIMLANE_NAME',
+      initialValue: oldName,
+      onSubmit: async (newName) => {
+        closePrompt()
+        if (!newName || newName === oldName) return
+        const trimmedNewName = newName.trim()
+
+        setSwimlanes((prev) =>
+          prev.map((s) => (s.name === oldName ? { ...s, name: trimmedNewName } : s))
+        )
+        setTasks((prev) =>
+          prev.map((t) =>
+            (t.category || 'General') === oldName ? { ...t, category: trimmedNewName } : t
+          )
+        )
+        setStatuses((prev) =>
+          prev.map((s) =>
+            s.swimlane_name === oldName ? { ...s, swimlane_name: trimmedNewName } : s
+          )
+        )
+
+        try {
+          await updateSwimlane(oldName, trimmedNewName)
+        } catch (err: unknown) {
+          setSwimlanes((prev) =>
+            prev.map((s) => (s.name === trimmedNewName ? { ...s, name: oldName } : s))
+          )
+          setTasks((prev) =>
+            prev.map((t) =>
+              (t.category || 'General') === trimmedNewName ? { ...t, category: oldName } : t
+            )
+          )
+          setStatuses((prev) =>
+            prev.map((s) =>
+              s.swimlane_name === trimmedNewName ? { ...s, swimlane_name: oldName } : s
+            )
+          )
+          const message = err instanceof Error ? err.message : 'Failed to rename swimlane'
+          setError(`[ERR_RENAME_SWIMLANE] > ${message}`)
+        }
+      },
+    })
+  }
+
+  const handleDeleteSwimlane = (laneName: string) => {
+    if (swimlaneNames.length <= 1) {
+      setError('[ERR_DELETE_SWIMLANE] > Cannot delete the last remaining swimlane')
+      return
+    }
+
+    openConfirm({
+      title: 'CONFIRM_DELETE_SWIMLANE',
+      message: `Are you sure you want to delete swimlane '${laneName}'?\nAll associated tasks will be reassigned to the default lane.`,
+      confirmText: '[DELETE_SWIMLANE]',
+      onConfirm: async () => {
+        closeConfirm()
+        const fallbackLane = swimlaneNames.find((n) => n !== laneName) || 'General'
+
+        setSwimlanes((prev) => prev.filter((s) => s.name !== laneName))
+        setTasks((prev) =>
+          prev.map((t) =>
+            (t.category || 'General') === laneName ? { ...t, category: fallbackLane } : t
+          )
+        )
+        setStatuses((prev) => prev.filter((s) => s.swimlane_name !== laneName))
+
+        try {
+          const res = await deleteSwimlane(laneName)
+          if (res.fallback) {
+            setTasks((prev) =>
+              prev.map((t) =>
+                (t.category || 'General') === laneName ? { ...t, category: res.fallback } : t
+              )
+            )
+          }
+        } catch (err: unknown) {
+          Promise.all([getTasks(), getSwimlanes(), getStatuses()])
+            .then(([t, sw, st]) => {
+              setTasks(t)
+              setSwimlanes(sw)
+              setStatuses(st)
+            })
+            .catch(() => {})
+          const message = err instanceof Error ? err.message : 'Failed to delete swimlane'
+          setError(`[ERR_DELETE_SWIMLANE] > ${message}`)
+        }
+      },
+    })
+  }
+
+  const handleCreateStatus = (swimlaneName: string) => {
+    openPrompt({
+      title: 'ADD_STATUS_COLUMN',
+      message: `Add custom status column to swimlane '${swimlaneName}'.`,
+      inputLabel: 'STATUS_NAME',
+      placeholder: 'e.g. In Testing / In Review',
+      secondaryInputLabel: 'DEFAULT_PROGRESS_PERCENTAGE',
+      secondaryPlaceholder: '0-100',
+      secondaryInitialValue: '0',
+      secondaryIsNumeric: true,
+      secondaryAllowNoOverride: true,
+      submitText: '[CREATE_STATUS]',
+      onSubmit: async (name, progStr) => {
+        closePrompt()
+        if (!name.trim()) return
+
+        let defaultProgress: number | null = null
+        if (
+          progStr !== undefined &&
+          progStr.trim() !== '' &&
+          progStr.trim().toLowerCase() !== 'none' &&
+          progStr.trim().toLowerCase() !== 'null'
+        ) {
+          const parsed = parseInt(progStr.trim(), 10)
+          if (!isNaN(parsed)) {
+            defaultProgress = Math.max(0, Math.min(100, parsed))
+          }
+        }
+
+        const trimmedName = name.trim()
+        try {
+          const newStatusObj = await createStatus(trimmedName, swimlaneName, defaultProgress)
+          setStatuses((prev) => [...prev, newStatusObj])
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Failed to create status'
+          setError(`[ERR_CREATE_STATUS] > ${message}`)
+        }
+      },
+    })
+  }
+
+  const handleEditStatus = (statusObj: StatusItem) => {
+    const oldName = statusObj.name
+    const swimlaneName = statusObj.swimlane_name
+    const initialProg =
+      statusObj.default_progress !== null && statusObj.default_progress !== undefined
+        ? String(statusObj.default_progress)
+        : 'none'
+
+    openPrompt({
+      title: 'EDIT_STATUS_COLUMN',
+      message: `Configure status column in '${swimlaneName}'.`,
+      inputLabel: 'STATUS_NAME',
+      initialValue: oldName,
+      secondaryInputLabel: 'DEFAULT_PROGRESS_PERCENTAGE',
+      secondaryPlaceholder: '0-100',
+      secondaryInitialValue: initialProg,
+      secondaryIsNumeric: true,
+      secondaryAllowNoOverride: true,
+      submitText: '[UPDATE_STATUS]',
+      onSubmit: async (newName, progStr) => {
+        closePrompt()
+
+        let newDefaultProgress: number | null = null
+        if (
+          progStr !== undefined &&
+          progStr.trim() !== '' &&
+          progStr.trim().toLowerCase() !== 'none' &&
+          progStr.trim().toLowerCase() !== 'null'
+        ) {
+          const parsed = parseInt(progStr.trim(), 10)
+          if (!isNaN(parsed)) {
+            newDefaultProgress = Math.max(0, Math.min(100, parsed))
+          }
+        }
+
+        const trimmedNewName = newName.trim() || oldName
+
+        // Optimistically update statuses state & task status
+        setStatuses((prev) =>
+          prev.map((s) =>
+            s.id === statusObj.id || (s.name === oldName && s.swimlane_name === swimlaneName)
+              ? { ...s, name: trimmedNewName, default_progress: newDefaultProgress }
+              : s
+          )
+        )
+
+        if (trimmedNewName !== oldName) {
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.status === oldName && (t.category || 'General') === swimlaneName
+                ? { ...t, status: trimmedNewName }
+                : t
+            )
+          )
+        }
+
+        try {
+          await updateStatus(oldName, trimmedNewName, swimlaneName, newDefaultProgress)
+        } catch (err: unknown) {
+          // Revert state
+          setStatuses((prev) =>
+            prev.map((s) =>
+              s.id === statusObj.id || (s.name === trimmedNewName && s.swimlane_name === swimlaneName)
+                ? { ...s, name: oldName, default_progress: statusObj.default_progress }
+                : s
+            )
+          )
+          if (trimmedNewName !== oldName) {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.status === trimmedNewName && (t.category || 'General') === swimlaneName
+                  ? { ...t, status: oldName }
+                  : t
+              )
+            )
+          }
+          const message = err instanceof Error ? err.message : 'Failed to edit status'
+          setError(`[ERR_EDIT_STATUS] > ${message}`)
+        }
+      },
+    })
+  }
+
+  const handleDeleteStatus = (statusObj: StatusItem) => {
+    const nameToDelete = statusObj.name
+    const swimlaneName = statusObj.swimlane_name
+
+    const laneStatuses = statuses.filter((s) => s.swimlane_name === swimlaneName)
+    if (laneStatuses.length <= 1) {
+      setError(`[ERR_DELETE_STATUS] > Cannot delete the last remaining status in [${swimlaneName}]`)
+      return
+    }
+
+    openConfirm({
+      title: 'CONFIRM_DELETE_STATUS',
+      message: `Delete status column '${nameToDelete}' in '${swimlaneName}'?\nExisting tasks will be reassigned to the fallback status column.`,
+      confirmText: '[DELETE_STATUS]',
+      onConfirm: async () => {
+        closeConfirm()
+        const fallbackStatus = laneStatuses.find((s) => s.name !== nameToDelete)?.name || 'To Do'
+
+        // Optimistic update
+        setStatuses((prev) => prev.filter((s) => s.id !== statusObj.id))
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.status === nameToDelete && (t.category || 'General') === swimlaneName
+              ? { ...t, status: fallbackStatus }
+              : t
+          )
+        )
+
+        try {
+          const res = await deleteStatus(nameToDelete, swimlaneName)
+          if (res.fallback) {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.status === nameToDelete && (t.category || 'General') === swimlaneName
+                  ? { ...t, status: res.fallback }
+                  : t
+              )
+            )
+          }
+        } catch (err: unknown) {
+          Promise.all([getTasks(), getStatuses()])
+            .then(([t, s]) => {
+              setTasks(t)
+              setStatuses(s)
+            })
+            .catch(() => {})
+          const message = err instanceof Error ? err.message : 'Failed to delete status'
+          setError(`[ERR_DELETE_STATUS] > ${message}`)
+        }
+      },
+    })
+  }
+
+  const handleUpdateTask = async (updatedTask: Task) => {
+    const originalTask = tasks.find((t) => t.id === updatedTask.id)
+    if (!originalTask) return
+
+    // Optimistic update
+    setTasks((prev) =>
+      prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
+    )
+    setEditingTask(null)
+
+    try {
+      const { id, subtasks: _subtasks, logs: _logs, created_at: _created_at, ...updates } = updatedTask
+      const updated = await updateTask(id, updates)
+      // Merge returned backend task
+      setTasks((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...updated } : t))
+      )
+    } catch (err: unknown) {
+      // Revert state on failure
+      setTasks((prev) =>
+        prev.map((t) => (t.id === updatedTask.id ? originalTask : t))
+      )
+      const message = err instanceof Error ? err.message : 'Failed to update task'
+      setError(`[ERR_TASK_UPDATE] > ${message}`)
+    }
+  }
+
+  const handleDragEnd = async (result: DropResult) => {
+    const { destination, source, draggableId, type } = result
+
+    if (!destination) return
+    if (
+      destination.droppableId === source.droppableId &&
+      destination.index === source.index
+    ) {
+      return
+    }
+
+    // Handle Swimlane vertical drag and drop
+    if (type === 'SWIMLANE') {
+      if (sortMode !== 'custom') return
+
+      const reorderedNames = Array.from(sortedSwimlaneNames)
+      const [movedName] = reorderedNames.splice(source.index, 1)
+      reorderedNames.splice(destination.index, 0, movedName)
+
+      const itemsToSave = reorderedNames.map((name, idx) => ({ name, order: idx }))
+
+      // Optimistically update swimlanes order state
+      setSwimlanes((prev) => {
+        const next = [...prev]
+        itemsToSave.forEach((item) => {
+          const existing = next.find((s) => s.name === item.name)
+          if (existing) {
+            existing.order = item.order
+          } else {
+            next.push({ id: Date.now(), name: item.name, order: item.order })
+          }
+        })
+        return next.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      })
+
+      try {
+        await reorderSwimlanes(itemsToSave)
+      } catch (err: unknown) {
+        getSwimlanes()
+          .then((sw) => setSwimlanes(sw))
+          .catch(() => {})
+        const message = err instanceof Error ? err.message : 'Failed to reorder swimlanes'
+        setError(`[ERR_SWIMLANE_REORDER] > ${message}`)
+      }
+      return
+    }
+
+    // Handle Task drag and drop across columns/swimlanes
+    const taskId = Number(draggableId)
+    const targetTask = tasks.find((t) => t.id === taskId)
+    if (!targetTask) return
+
+    // Parse source & destination composite droppableIds: `${category}|${status}`
+    const [, sourceStatus] = source.droppableId.split('|')
+    const [destCategory, destStatus] = destination.droppableId.split('|')
+
+    const oldCategory = targetTask.category || 'General'
+    const oldStatus = targetTask.status
+    const oldProgress = targetTask.progress_percentage
+    const oldPrevProgress = targetTask.previous_progress
+
+    const destStatusObj = statuses.find(
+      (s) => s.name === destStatus && s.swimlane_name === (destCategory || oldCategory)
+    )
+
+    const updates: Partial<Task> = {
+      category: destCategory || oldCategory,
+      status: destStatus || oldStatus,
+    }
+
+    // Progress memory logic & automatic status default progress mapping:
+    if (destStatus === 'Done' && sourceStatus !== 'Done') {
+      updates.previous_progress = Math.round(targetTask.progress_percentage)
+      updates.progress_percentage = 100
+    } else if (sourceStatus === 'Done' && destStatus !== 'Done') {
+      if (destStatusObj && destStatusObj.default_progress !== null && destStatusObj.default_progress !== undefined) {
+        updates.progress_percentage = destStatusObj.default_progress
+      } else {
+        updates.progress_percentage = targetTask.previous_progress || 0
+      }
+    } else if (
+      destStatus !== sourceStatus &&
+      destStatusObj &&
+      destStatusObj.default_progress !== null &&
+      destStatusObj.default_progress !== undefined
+    ) {
+      updates.progress_percentage = destStatusObj.default_progress
+    }
+
+    // Optimistic update
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, ...updates } : t))
+    )
+
+    try {
+      await updateTask(taskId, updates)
+    } catch (err: unknown) {
+      // Revert state on failure
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                category: oldCategory,
+                status: oldStatus,
+                progress_percentage: oldProgress,
+                previous_progress: oldPrevProgress,
+              }
+            : t
+        )
+      )
+      const message = err instanceof Error ? err.message : 'Failed to update task position'
+      setError(`[ERR_POSITION_UPDATE] > ${message}`)
+    }
+  }
+
+  return (
+    <div className="scanlines min-h-screen bg-void circuit-grid text-fg">
+
+      {/* ── Header ────────────────────────────────────────── */}
+      <header className="relative border-b border-cyber-border bg-void-card/80 px-6 py-4 backdrop-blur-sm">
+        {/* HUD corner accents on header */}
+        <div className="absolute top-0 left-0 h-4 w-4 border-t-2 border-l-2 border-neon-green" />
+        <div className="absolute top-0 right-0 h-4 w-4 border-t-2 border-r-2 border-neon-green" />
+        <div className="absolute bottom-0 left-0 h-4 w-4 border-b-2 border-l-2 border-neon-green" />
+        <div className="absolute bottom-0 right-0 h-4 w-4 border-b-2 border-r-2 border-neon-green" />
+
+        {/* Title row */}
+        <div className="flex items-center gap-3">
+          <KanbanSquare className="h-8 w-8 text-neon-green drop-shadow-[0_0_8px_#00ff88] md:h-9 md:w-9" />
+          <h1
+            className="font-heading text-3xl font-black uppercase tracking-widest text-neon-green cyber-glitch md:text-4xl"
+            style={{
+              textShadow:
+                '0 0 8px #00ff88, 0 0 20px #00ff8860, 0 0 40px #00ff8830, -1px 0 #ff00ff30, 1px 0 #00d4ff30',
+            }}
+          >
+            {'>'} Project_Board
+          </h1>
+        </div>
+
+        {/* Status indicator row */}
+        <div className="mt-1.5 flex items-center gap-4 pl-11 md:pl-12">
+          <div className="hidden items-center gap-2 sm:flex">
+            <Wifi className="h-3.5 w-3.5 text-neon-green" />
+            <span className="font-label text-xs uppercase tracking-[0.2em] text-neon-green">
+              sys_online
+            </span>
+          </div>
+          <div className="font-label text-xs uppercase tracking-[0.2em] text-fg-muted">
+            v1.0.0
+          </div>
+        </div>
+      </header>
+
+      {/* ── System status bar & Controls ──────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyber-border bg-void-card/40 px-6 py-2">
+        <div className="flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-neon-green" />
+          <span className="font-label text-sm uppercase tracking-[0.15em] text-fg-muted md:text-base">
+            task_manager {'>'} swimlanes_view {'>'} {tasks.length} nodes_loaded
+          </span>
+          <span className="cursor-blink font-label text-sm text-neon-green" />
+        </div>
+
+        <div className="flex items-center gap-4 ml-auto">
+          {/* Sort Controls */}
+          <div className="flex items-center gap-2 border border-cyber-border/80 bg-void-muted/60 px-2.5 py-1 cyber-chamfer-sm">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-neon-cyan" />
+            <span className="font-label text-xs uppercase tracking-wider text-fg-muted hidden sm:inline">
+              Sort Lanes:
+            </span>
+            <div className="flex items-center gap-1 font-label text-xs uppercase tracking-wider">
+              <button
+                type="button"
+                onClick={() => setSortMode('custom')}
+                className={`px-2 py-0.5 transition-colors ${
+                  sortMode === 'custom'
+                    ? 'bg-neon-cyan/20 text-neon-cyan font-bold border border-neon-cyan/50'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+                title="Order driven by Drag-and-Drop"
+              >
+                Custom
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortMode('volume')}
+                className={`px-2 py-0.5 transition-colors ${
+                  sortMode === 'volume'
+                    ? 'bg-neon-cyan/20 text-neon-cyan font-bold border border-neon-cyan/50'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+                title="Sort by Task Volume (High to Low)"
+              >
+                Volume
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortMode('az')}
+                className={`px-2 py-0.5 transition-colors ${
+                  sortMode === 'az'
+                    ? 'bg-neon-cyan/20 text-neon-cyan font-bold border border-neon-cyan/50'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+                title="Sort Alphabetically (A-Z)"
+              >
+                A-Z
+              </button>
+            </div>
+          </div>
+
+          {/* HUD Mode Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsMinimalHUD(!isMinimalHUD)}
+            className={`cyber-chamfer-sm flex items-center gap-1.5 border px-2.5 py-1 font-label text-xs uppercase tracking-wider transition-all ${
+              isMinimalHUD
+                ? 'border-neon-magenta/60 bg-neon-magenta/10 text-neon-magenta shadow-[0_0_8px_#ff00ff40]'
+                : 'border-cyber-border bg-void-muted/60 text-fg-muted hover:border-fg-muted hover:text-fg'
+            }`}
+            title="Toggle between Minimal and Detailed Task Cards"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            [O] HUD: {isMinimalHUD ? 'MINIMAL' : 'DETAILED'}
+          </button>
+
+          {/* System Activity Logs Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              const next = !isLogOpen
+              setIsLogOpen(next)
+              if (next) fetchActivityLogs()
+            }}
+            className={`cyber-chamfer-sm flex items-center gap-1.5 border px-2.5 py-1 font-label text-xs uppercase tracking-wider transition-all ${
+              isLogOpen
+                ? 'border-neon-cyan/80 bg-neon-cyan/20 text-neon-cyan shadow-[0_0_10px_#00d4ff40]'
+                : 'border-cyber-border bg-void-muted/60 text-fg-muted hover:border-fg-muted hover:text-fg'
+            }`}
+            title="Toggle Activity Logs Sidebar"
+          >
+            <ListFilter className="h-3.5 w-3.5" />
+            [≡] SYSTEM_LOGS
+          </button>
+
+          {/* Create task button */}
+          <button
+            type="button"
+            onClick={() => setShowTerminal(true)}
+            className="cyber-chamfer-sm flex items-center gap-1.5 border border-neon-green/60 bg-neon-green/5 px-3 py-1.5 font-label text-[11px] uppercase tracking-[0.2em] text-neon-green transition-all duration-200 hover:bg-neon-green hover:text-void hover:shadow-[0_0_8px_#00ff88,0_0_16px_#00ff8830] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-green"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            initiate_task
+          </button>
+        </div>
+      </div>
+
+      {/* ── Loading / Error states ────────────────────────── */}
+      {loading && (
+        <div className="flex items-center justify-center gap-3 py-24 text-fg-muted">
+          <Loader2 className="h-5 w-5 animate-spin text-neon-green" />
+          <span className="font-label text-sm uppercase tracking-[0.2em]">
+            {'>'} initializing_data_stream...
+          </span>
+        </div>
+      )}
+
+      {error && (
+        <div className="cyber-chamfer-sm mx-6 mt-6 flex items-center justify-between border-2 border-neon-red/50 bg-neon-red/10 px-4 py-3">
+          <span className="font-label text-sm uppercase tracking-wider text-neon-red">
+            [ERR_CONNECTION] {'>'} {error}
+          </span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="font-label text-xs uppercase tracking-wider text-neon-red hover:underline"
+          >
+            [dismiss]
+          </button>
+        </div>
+      )}
+
+      {/* ── Kanban Swimlanes Board ────────────────────────── */}
+      {!loading && (
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <Droppable droppableId="all-swimlanes" type="SWIMLANE">
+            {(droppableProvided) => (
+              <main
+                ref={droppableProvided.innerRef}
+                {...droppableProvided.droppableProps}
+                className="space-y-6 p-5"
+              >
+                {sortedSwimlaneNames.map((category, index) => {
+                  const categoryTasks = tasks.filter(
+                    (t) => (t.category || 'General') === category
+                  )
+                  const swimlaneStatuses = statuses.filter(
+                    (s) => s.swimlane_name === category
+                  )
+
+                  return (
+                    <Draggable
+                      key={category}
+                      draggableId={`swimlane-${category}`}
+                      index={index}
+                      isDragDisabled={sortMode !== 'custom'}
+                    >
+                      {(draggableProvided, draggableSnapshot) => (
+                        <section
+                          ref={draggableProvided.innerRef}
+                          {...draggableProvided.draggableProps}
+                          className={`cyber-chamfer border border-cyber-border bg-void-card/60 p-4 shadow-xl transition-shadow ${
+                            draggableSnapshot.isDragging
+                              ? 'shadow-[0_0_25px_#00d4ff60] border-neon-cyan/80 z-40'
+                              : ''
+                          }`}
+                        >
+                          {/* ── Swimlane Header ──────────────────────────── */}
+                          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-cyber-border/80 pb-3">
+                            <div className="flex items-center gap-3">
+                              {/* Drag Handle */}
+                              <div
+                                {...draggableProvided.dragHandleProps}
+                                className={`cyber-chamfer-sm p-1 transition-colors ${
+                                  sortMode === 'custom'
+                                    ? 'cursor-grab hover:bg-neon-cyan/20 active:cursor-grabbing text-neon-cyan'
+                                    : 'cursor-not-allowed opacity-30 text-fg-muted'
+                                }`}
+                                title={
+                                  sortMode === 'custom'
+                                    ? 'Drag to reorder swimlane'
+                                    : 'Switch sort mode to Custom to reorder'
+                                }
+                              >
+                                <GripVertical className="h-4 w-4" />
+                              </div>
+
+                              <span
+                                className="h-3 w-3 bg-neon-cyan shadow-[0_0_8px_#00d4ff]"
+                                style={{ clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)' }}
+                              />
+                              <h2 className="font-heading text-lg font-bold uppercase tracking-[0.2em] text-neon-cyan drop-shadow-[0_0_6px_#00d4ff60]">
+                                {'>'} {category.toUpperCase()}
+                              </h2>
+                              <button
+                                type="button"
+                                onClick={() => handleEditSwimlane(category)}
+                                className="cyber-chamfer-sm border border-cyber-border bg-void-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-muted transition-colors hover:border-neon-cyan/60 hover:text-neon-cyan focus-visible:outline-none flex items-center gap-1"
+                                title="Rename Swimlane"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                [EDIT]
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSwimlane(category)}
+                                className="cyber-chamfer-sm border border-cyber-border bg-void-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-muted transition-colors hover:border-neon-red/60 hover:text-neon-red focus-visible:outline-none flex items-center gap-1"
+                                title="Delete Swimlane"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                [DELETE]
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                onClick={() => handleCreateStatus(category)}
+                                className="cyber-chamfer-sm border border-neon-cyan/60 bg-neon-cyan/10 px-2.5 py-1 font-label text-[11px] font-semibold uppercase tracking-wider text-neon-cyan transition-all duration-200 hover:bg-neon-cyan hover:text-void flex items-center gap-1 focus-visible:outline-none"
+                                title="Add Custom Status Column to this Swimlane"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                                [+] ADD STATUS
+                              </button>
+                              <div className="flex items-center gap-2">
+                                <span className="font-label text-xs uppercase tracking-wider text-fg-muted">
+                                  nodes:
+                                </span>
+                                <span className="cyber-chamfer-sm border border-neon-cyan/50 bg-neon-cyan/10 px-2.5 py-0.5 font-label text-xs tabular-nums text-neon-cyan">
+                                  {categoryTasks.length}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* ── Status Columns inside Swimlane ─────────── */}
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                            {swimlaneStatuses.length > 0 ? (
+                              swimlaneStatuses.map((statusObj, idx) => {
+                                const palette = COLOR_PALETTE[idx % COLOR_PALETTE.length]
+                                const columnTasks = categoryTasks.filter(
+                                  (t) => t.status === statusObj.name
+                                )
+                                const compositeDroppableId = `${category}|${statusObj.name}`
+
+                                return (
+                                  <div
+                                    key={statusObj.id || `${category}-${statusObj.name}`}
+                                    className="cyber-chamfer-sm flex flex-col border border-cyber-border/60 bg-void/70 p-3"
+                                  >
+                                    {/* Column header inside swimlane */}
+                                    <div className="mb-3 flex items-center gap-2 border-b border-cyber-border/40 pb-2">
+                                      <span
+                                        className={`h-2 w-2 ${palette.color} ${palette.glowClass}`}
+                                        style={{
+                                          clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+                                        }}
+                                      />
+                                      <div className="flex items-baseline gap-1 truncate max-w-[110px]">
+                                        <h3 className="font-label text-xs font-medium uppercase tracking-[0.15em] text-fg-muted truncate">
+                                          {statusObj.name}
+                                        </h3>
+                                        <span
+                                          className="font-mono text-[9px] text-neon-cyan/70 font-semibold shrink-0"
+                                          title={`Default progress: ${
+                                            statusObj.default_progress !== null &&
+                                            statusObj.default_progress !== undefined
+                                              ? `${statusObj.default_progress}%`
+                                              : 'No Override'
+                                          }`}
+                                        >
+                                          {statusObj.default_progress !== null &&
+                                          statusObj.default_progress !== undefined
+                                            ? `(${statusObj.default_progress}%)`
+                                            : '(--)'}
+                                        </span>
+                                      </div>
+                                      <div className="ml-auto flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleEditStatus(statusObj)}
+                                          className="text-fg-muted transition-colors hover:text-neon-cyan"
+                                          title="Edit Status & Default Progress"
+                                        >
+                                          <Edit3 className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteStatus(statusObj)}
+                                          className="text-fg-muted transition-colors hover:text-neon-red"
+                                          title="Delete Status"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                        <span className="cyber-chamfer-sm border border-cyber-border bg-void-muted px-1.5 py-0.5 font-label text-[10px] tabular-nums text-neon-green">
+                                          {columnTasks.length}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Droppable area */}
+                                    <Droppable droppableId={compositeDroppableId} type="TASK">
+                                      {(provided, snapshot) => (
+                                        <div
+                                          ref={provided.innerRef}
+                                          {...provided.droppableProps}
+                                          className={`flex flex-1 flex-col gap-3 min-h-[140px] transition-colors rounded p-1 ${
+                                            snapshot.isDraggingOver
+                                              ? 'bg-void-muted/40 border border-dashed border-neon-cyan/40'
+                                              : ''
+                                          }`}
+                                        >
+                                          {columnTasks.length > 0 ? (
+                                            columnTasks.map((task, taskIndex) => (
+                                              <TaskCard
+                                                key={task.id}
+                                                task={task}
+                                                index={taskIndex}
+                                                onEdit={(taskToEdit) => setEditingTask(taskToEdit)}
+                                                isMinimalHUD={isMinimalHUD}
+                                              />
+                                            ))
+                                          ) : (
+                                            <div className="flex flex-1 items-center justify-center border border-dashed border-cyber-border/40 py-8">
+                                              <span className="font-label text-[11px] uppercase tracking-[0.15em] text-fg-muted/60">
+                                                {'>'} empty_lane_
+                                              </span>
+                                            </div>
+                                          )}
+                                          {provided.placeholder}
+                                        </div>
+                                      )}
+                                    </Droppable>
+                                  </div>
+                                )
+                              })
+                            ) : (
+                              <div className="col-span-full flex flex-col items-center justify-center border border-dashed border-cyber-border/40 bg-void/30 p-8 text-center">
+                                <span className="font-label text-xs uppercase tracking-[0.2em] text-fg-muted mb-3">
+                                  {'>'} CLEAN_SWIMLANE :: NO STATUS COLUMNS REGISTERED
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCreateStatus(category)}
+                                  className="cyber-chamfer-sm border border-neon-cyan/60 bg-neon-cyan/10 px-3 py-1.5 font-label text-xs uppercase tracking-wider text-neon-cyan transition-all duration-200 hover:bg-neon-cyan hover:text-void flex items-center gap-1.5"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  [+] ADD STATUS COLUMN
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      )}
+                    </Draggable>
+                  )
+                })}
+                {droppableProvided.placeholder}
+
+                {/* ── Initiate Swimlane Button ─────────────────────── */}
+                <div className="mt-8 flex justify-center pb-8">
+                  <button
+                    type="button"
+                    onClick={() => setIsSwimlaneModalOpen(true)}
+                    className="cyber-chamfer flex items-center gap-2 border-2 border-neon-cyan bg-neon-cyan/10 px-6 py-3 font-label text-xs font-bold uppercase tracking-[0.2em] text-neon-cyan shadow-[0_0_15px_#00d4ff30] transition-all duration-200 hover:bg-neon-cyan hover:text-void hover:shadow-[0_0_20px_#00d4ff,0_0_40px_#00d4ff60] focus-visible:outline-none"
+                  >
+                    <Plus className="h-4 w-4" />
+                    [+] INITIATE_LANE
+                  </button>
+                </div>
+              </main>
+            )}
+          </Droppable>
+        </DragDropContext>
+      )}
+
+      {/* ── Create Task Terminal Modal ─────────────────── */}
+      <CreateTaskTerminal
+        open={showTerminal}
+        onClose={() => setShowTerminal(false)}
+        onCreated={handleTaskCreated}
+        categories={swimlaneNames}
+        statuses={statuses}
+      />
+
+      {/* ── Edit Task Terminal Modal ───────────────────── */}
+      {editingTask && (
+        <EditTaskTerminal
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSave={handleUpdateTask}
+          categories={swimlaneNames}
+          statuses={statuses}
+        />
+      )}
+
+      {/* ── Swimlane Creation Terminal Modal ────────────── */}
+      <SwimlaneCreationTerminal
+        isOpen={isSwimlaneModalOpen}
+        onClose={() => setIsSwimlaneModalOpen(false)}
+        onSubmit={handleSwimlaneSubmit}
+      />
+
+      {/* ── Universal Prompt Terminal Modal ──────────────── */}
+      <PromptTerminal
+        isOpen={promptConfig.isOpen}
+        title={promptConfig.title}
+        message={promptConfig.message}
+        inputLabel={promptConfig.inputLabel}
+        placeholder={promptConfig.placeholder}
+        initialValue={promptConfig.initialValue}
+        isNumeric={promptConfig.isNumeric}
+        secondaryInputLabel={promptConfig.secondaryInputLabel}
+        secondaryPlaceholder={promptConfig.secondaryPlaceholder}
+        secondaryInitialValue={promptConfig.secondaryInitialValue}
+        secondaryIsNumeric={promptConfig.secondaryIsNumeric}
+        secondaryAllowNoOverride={promptConfig.secondaryAllowNoOverride}
+        submitText={promptConfig.submitText}
+        onCancel={closePrompt}
+        onSubmit={promptConfig.onSubmit}
+      />
+
+      {/* ── Universal Confirm Terminal Modal ─────────────── */}
+      <ConfirmTerminal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText={confirmConfig.confirmText}
+        onCancel={closeConfirm}
+        onConfirm={confirmConfig.onConfirm}
+      />
+
+      {/* ── Activity Logs Cyberpunk Sidebar ──────────── */}
+      {isLogOpen && (
+        <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-neon-cyan/60 bg-void-card/95 backdrop-blur-md shadow-2xl transition-all duration-300">
+          {/* Sidebar Header */}
+          <div className="flex items-center justify-between border-b border-cyber-border px-5 py-4 bg-void-muted/60">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 text-neon-cyan animate-pulse" />
+              <h2 className="font-heading text-base font-bold uppercase tracking-widest text-neon-cyan">
+                {'>'} SYSTEM_ACTIVITY_LOGS
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsLogOpen(false)}
+              className="text-fg-muted transition-colors hover:text-neon-red focus-visible:outline-none"
+              aria-label="Close logs sidebar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Logs List Container */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-xs">
+            {logs.length > 0 ? (
+              logs.map((log) => (
+                <div
+                  key={log.id}
+                  className="cyber-chamfer-sm border border-cyber-border/60 bg-void/80 p-3 space-y-1 transition-all hover:border-neon-cyan/40"
+                >
+                  <div className="flex items-center justify-between text-[10px] text-fg-muted/70">
+                    <span className="text-neon-cyan font-bold">{log.task_title || '[SYSTEM]'}</span>
+                    <span className="tabular-nums">
+                      {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                  <p className="text-fg leading-relaxed">
+                    <span className="text-neon-green">{'> '}</span>
+                    {log.description || log.details || log.action}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="flex h-48 items-center justify-center border border-dashed border-cyber-border/40 text-fg-muted">
+                <span>{'>'} NO_ACTIVITY_LOGS_FOUND</span>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar Footer */}
+          <div className="border-t border-cyber-border p-3 text-center">
+            <button
+              type="button"
+              onClick={fetchActivityLogs}
+              className="cyber-chamfer-sm w-full border border-neon-cyan/40 bg-neon-cyan/10 py-1.5 font-label text-xs uppercase tracking-wider text-neon-cyan transition-all hover:bg-neon-cyan hover:text-void"
+            >
+              [REFRESH_LOGS]
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Footer status line ────────────────────────────── */}
+      <footer className="mt-auto border-t border-cyber-border px-6 py-2">
+        <div className="flex items-center justify-between font-label text-[10px] uppercase tracking-[0.15em] text-fg-muted">
+          <span>kanban_sys::v1.0</span>
+          <span className="text-neon-green/60">
+            ■ connected
+          </span>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+export default App
