@@ -247,7 +247,7 @@ export default function PromptTerminal({
           {colorInputLabel && (
             <div className="space-y-1.5 pt-1">
               <label className="block font-label text-xs uppercase tracking-[0.15em] text-fg-muted">
-                {colorInputLabel}
+                {colorInputLabel.startsWith('>') ? colorInputLabel : `> ${colorInputLabel}`}
               </label>
               <div className="flex items-center gap-2">
                 <div

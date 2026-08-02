@@ -14,6 +14,7 @@ import {
   X,
   Tag,
   Search,
+  Copy,
 } from 'lucide-react'
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd'
 import {
@@ -24,6 +25,7 @@ import {
   updateSwimlane,
   reorderSwimlanes,
   deleteSwimlane,
+  duplicateSwimlane,
   getStatuses,
   createStatus,
   updateStatus,
@@ -64,6 +66,7 @@ function App() {
   const [logs, setLogs] = useState<ActivityLog[]>([])
   const [globalHashtags, setGlobalHashtags] = useState<Hashtag[]>([])
   const [isManageTagsOpen, setIsManageTagsOpen] = useState(false)
+  const [includeUnstarted, setIncludeUnstarted] = useState(false)
 
   // Phase 3 States: Search, Filter Engine & Property Visibility
   const [searchQuery, setSearchQuery] = useState('')
@@ -129,8 +132,11 @@ function App() {
     secondaryInitialValue?: string
     secondaryIsNumeric?: boolean
     secondaryAllowNoOverride?: boolean
+    colorInputLabel?: string
+    colorPlaceholder?: string
+    colorInitialValue?: string
     submitText?: string
-    onSubmit: (val: string, secVal?: string) => void
+    onSubmit: (val: string, secVal?: string, colorVal?: string) => void
   }>({
     isOpen: false,
     title: '',
@@ -363,6 +369,19 @@ function App() {
     })
   }
 
+  const handleDuplicateSwimlane = async (laneName: string) => {
+    try {
+      await duplicateSwimlane(laneName)
+      const [t, sw, st] = await Promise.all([getTasks(), getSwimlanes(), getStatuses()])
+      setTasks(t)
+      setSwimlanes(sw)
+      setStatuses(st)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to duplicate swimlane'
+      setError(`[ERR_DUPLICATE_SWIMLANE] > ${message}`)
+    }
+  }
+
   const handleCreateStatus = (swimlaneName: string) => {
     openPrompt({
       title: 'ADD_STATUS_COLUMN',
@@ -374,8 +393,11 @@ function App() {
       secondaryInitialValue: '0',
       secondaryIsNumeric: true,
       secondaryAllowNoOverride: true,
+      colorInputLabel: 'COLOR_HEX (E.G. #00FFFF)',
+      colorPlaceholder: '#00ffff',
+      colorInitialValue: '#00ffff',
       submitText: '[CREATE_STATUS]',
-      onSubmit: async (name, progStr) => {
+      onSubmit: async (name, progStr, colorHex) => {
         closePrompt()
         if (!name.trim()) return
 
@@ -393,8 +415,9 @@ function App() {
         }
 
         const trimmedName = name.trim()
+        const colorVal = colorHex?.trim() || '#00ffff'
         try {
-          const newStatusObj = await createStatus(trimmedName, swimlaneName, defaultProgress)
+          const newStatusObj = await createStatus(trimmedName, swimlaneName, defaultProgress, colorVal)
           setStatuses((prev) => [...prev, newStatusObj])
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Failed to create status'
@@ -624,17 +647,12 @@ function App() {
     if (!targetTask) return
 
     // Parse source & destination composite droppableIds: `${category}|${status}`
-    const [, sourceStatus] = source.droppableId.split('|')
     const [destCategory, destStatus] = destination.droppableId.split('|')
 
     const oldCategory = targetTask.category || 'General'
     const oldStatus = targetTask.status
     const oldProgress = targetTask.progress_percentage
     const oldPrevProgress = targetTask.previous_progress
-
-    const destStatusObj = statuses.find(
-      (s) => s.name === destStatus && s.swimlane_name === (destCategory || oldCategory)
-    )
 
     const updates: Partial<Task> = {
       category: destCategory || oldCategory,
@@ -676,6 +694,19 @@ function App() {
     }
   }
 
+  // Real-time aggregate global completion percentage across active or raw tasks
+  const tasksToCalculate = includeUnstarted
+    ? tasks
+    : tasks.filter((t) => (t.progress_percentage || 0) > 0)
+
+  const totalCount = tasksToCalculate.length
+  const globalCompletionPercentage =
+    totalCount > 0
+      ? Math.round(
+          tasksToCalculate.reduce((sum, t) => sum + (t.progress_percentage || 0), 0) / totalCount
+        )
+      : 0
+
   return (
     <div className="scanlines min-h-screen bg-void circuit-grid text-fg">
 
@@ -689,16 +720,20 @@ function App() {
 
         {/* Title row */}
         <div className="flex items-center gap-3">
-          <KanbanSquare className="h-8 w-8 text-neon-green drop-shadow-[0_0_8px_#00ff88] md:h-9 md:w-9" />
-          <h1
-            className="font-heading text-3xl font-black uppercase tracking-widest text-neon-green cyber-glitch md:text-4xl"
-            style={{
-              textShadow:
-                '0 0 8px #00ff88, 0 0 20px #00ff8860, 0 0 40px #00ff8830, -1px 0 #ff00ff30, 1px 0 #00d4ff30',
-            }}
-          >
-            {'>'} Project_Board
-          </h1>
+          <KanbanSquare className="h-8 w-8 text-neon-green drop-shadow-[0_0_8px_#00ff88] md:h-9 md:w-9 shrink-0" />
+          <div className="relative inline-block">
+            <h1
+              data-text="> Project_Board"
+              className="true-cyber-glitch font-heading text-2xl font-black uppercase tracking-[0.25em] text-neon-green md:text-3xl"
+              style={{
+                clipPath: 'polygon(0 0, 100% 0, 98% 100%, 0 100%)',
+              }}
+            >
+              {'>'} Project_Board
+            </h1>
+            {/* Horizontal scanline split accent overlay cut */}
+            <div className="pointer-events-none absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 bg-void/90 shadow-[0_0_4px_#0a0a0f]" />
+          </div>
         </div>
 
         {/* Status indicator row */}
@@ -717,12 +752,27 @@ function App() {
 
       {/* ── System status bar & Controls ──────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyber-border bg-void-card/40 px-6 py-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Terminal className="h-4 w-4 text-neon-green" />
           <span className="font-label text-sm uppercase tracking-[0.15em] text-fg-muted md:text-base">
             task_manager {'>'} swimlanes_view {'>'} {tasks.length} nodes_loaded
           </span>
-          <span className="cursor-blink font-label text-sm text-neon-green" />
+          <span className="font-mono text-sm text-fg-muted/60">|</span>
+          <button
+            type="button"
+            onClick={() => setIncludeUnstarted(!includeUnstarted)}
+            className="font-mono text-xs uppercase tracking-[0.15em] text-fg-muted md:text-sm flex items-center gap-1 cursor-pointer select-none hover:text-fg transition-colors focus:outline-none"
+            title="Click to toggle between RAW (includes 0% tasks) and ACTIVE (skips 0% tasks) telemetry modes"
+          >
+            GLOBAL_COMPLETION:{' '}
+            <span className="font-bold text-neon-green drop-shadow-[0_0_6px_#00ff8880]">
+              {globalCompletionPercentage}%
+            </span>{' '}
+            <span className="text-[10px] font-bold text-neon-cyan border border-neon-cyan/40 bg-neon-cyan/10 px-1 py-0.2 tracking-wider">
+              [{includeUnstarted ? 'RAW' : 'ACTIVE'}]
+            </span>
+          </button>
+          <span className="cursor-blink font-label text-sm text-neon-green ml-0.5" />
         </div>
 
         <div className="flex flex-wrap items-center gap-3 ml-auto">
@@ -1070,6 +1120,15 @@ function App() {
                               </button>
                               <button
                                 type="button"
+                                onClick={() => handleDuplicateSwimlane(category)}
+                                className="cyber-chamfer-sm border border-cyber-border bg-void-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-muted transition-colors hover:border-neon-magenta/60 hover:text-neon-magenta focus-visible:outline-none flex items-center gap-1"
+                                title="Duplicate Swimlane & Reset Cloned Task Progress to 0%"
+                              >
+                                <Copy className="h-3 w-3" />
+                                [DUPLICATE]
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => handleDeleteSwimlane(category)}
                                 className="cyber-chamfer-sm border border-cyber-border bg-void-muted/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-muted transition-colors hover:border-neon-red/60 hover:text-neon-red focus-visible:outline-none flex items-center gap-1"
                                 title="Delete Swimlane"
@@ -1104,7 +1163,7 @@ function App() {
                             {swimlaneStatuses.length > 0 ? (
                               swimlaneStatuses.map((statusObj, idx) => {
                                 const palette = COLOR_PALETTE[idx % COLOR_PALETTE.length]
-                                const statusColor = statusObj.color || palette.hex || '#00ffff'
+                                const statusColor = statusObj.color || palette.color || '#00ffff'
                                 const columnTasks = categoryTasks.filter(
                                   (t) => t.status === statusObj.name
                                 )
@@ -1318,6 +1377,9 @@ function App() {
         secondaryInitialValue={promptConfig.secondaryInitialValue}
         secondaryIsNumeric={promptConfig.secondaryIsNumeric}
         secondaryAllowNoOverride={promptConfig.secondaryAllowNoOverride}
+        colorInputLabel={promptConfig.colorInputLabel}
+        colorPlaceholder={promptConfig.colorPlaceholder}
+        colorInitialValue={promptConfig.colorInitialValue}
         submitText={promptConfig.submitText}
         onCancel={closePrompt}
         onSubmit={promptConfig.onSubmit}

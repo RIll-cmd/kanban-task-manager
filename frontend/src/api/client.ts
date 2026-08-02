@@ -29,6 +29,8 @@ export interface CreateTaskPayload {
   priority?: string
   category?: string
   note?: string | null
+  previous_progress?: number
+  progress_percentage?: number
   start_date?: string | null
   scheduled_date?: string | null
   due_date?: string | null
@@ -203,6 +205,22 @@ export async function deleteSwimlane(
   }
 
   return response.json() as Promise<{ message: string; fallback: string }>
+}
+
+/**
+ * Duplicate a swimlane with all its statuses and cloned 0% progress tasks.
+ */
+export async function duplicateSwimlane(name: string): Promise<Swimlane> {
+  const response = await fetch(`${API_BASE}/swimlanes/${encodeURIComponent(name)}/duplicate`, {
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    throw new Error(`Failed to duplicate swimlane ${name}: ${response.status} ${response.statusText} ${errorBody}`)
+  }
+
+  return response.json() as Promise<Swimlane>
 }
 
 export interface StatusItem {

@@ -64,13 +64,6 @@ export default function CreateTaskTerminal({
   const titleRef = useRef<HTMLInputElement>(null)
   const tagDropdownRef = useRef<HTMLDivElement>(null)
 
-  // Snap progress to 100% when taskStatus becomes "DONE"
-  useEffect(() => {
-    if (taskStatus && taskStatus.toUpperCase() === 'DONE') {
-      setProgress(100)
-    }
-  }, [taskStatus])
-
   // Click outside to close dropdown
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -201,6 +194,7 @@ export default function CreateTaskTerminal({
       priority,
       category,
       status: taskStatus,
+      previous_progress: Math.max(0, Math.min(100, Number(progress) || 0)),
       progress_percentage: Math.max(0, Math.min(100, Number(progress) || 0)),
       start_date: startDate || null,
       scheduled_date: scheduledDate || null,
@@ -354,7 +348,13 @@ export default function CreateTaskTerminal({
                 <select
                   id="task-status"
                   value={taskStatus}
-                  onChange={(e) => setTaskStatus(e.target.value)}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value
+                    setTaskStatus(nextStatus)
+                    if (nextStatus.toUpperCase() === 'DONE') {
+                      setProgress(100)
+                    }
+                  }}
                   className="cyber-chamfer-sm w-full appearance-none border border-cyber-border bg-void py-2.5 pl-8 pr-8 font-mono text-xs uppercase text-neon-green transition-all duration-200 focus:border-neon-green focus:outline-none focus:shadow-[0_0_8px_#00ff88,0_0_16px_#00ff8830]"
                 >
                   {availableStatuses.map((s) => (

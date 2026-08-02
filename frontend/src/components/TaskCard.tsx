@@ -157,12 +157,16 @@ export default function TaskCard({
     }
   }
 
-  // Cross-Lane occurrences calculation (match title case-insensitively)
+  // Cross-Lane occurrences calculation (match title case-insensitively across distinct locations)
   const matchingTitleTasks = allTasks.filter(
     (t) => t.title.trim().toLowerCase() === task.title.trim().toLowerCase()
   )
-  const hasCrossLaneMatches = matchingTitleTasks.length > 1
-  const crossLaneAvgProgress = hasCrossLaneMatches
+  const uniqueLocationsSet = new Set(
+    matchingTitleTasks.map((t) => `${(t.category || 'General').toLowerCase()}-${(t.status || 'To Do').toLowerCase()}`)
+  )
+  const uniqueLocationsCount = uniqueLocationsSet.size
+  const hasCrossLaneMatches = uniqueLocationsCount > 1
+  const crossLaneAvgProgress = matchingTitleTasks.length > 0
     ? Math.round(
         matchingTitleTasks.reduce((sum, t) => sum + (t.progress_percentage || 0), 0) /
           matchingTitleTasks.length

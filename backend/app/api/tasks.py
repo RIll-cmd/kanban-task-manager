@@ -259,9 +259,8 @@ def duplicate_task(
             detail=f"Task with ID {task_id} not found",
         )
 
-    # Compute target progress snapshot
-    source_progress = getattr(source_task, "previous_progress", 0) or 0
-    target_progress = 100 if (payload.status and payload.status.upper() == "DONE") else source_progress
+    # Cloned tasks generated on duplication explicitly reset progress to 0%
+    target_progress = 0
 
     new_task = Task(
         title=source_task.title,
@@ -274,7 +273,7 @@ def duplicate_task(
         start_date=source_task.start_date,
         scheduled_date=source_task.scheduled_date,
         due_date=source_task.due_date,
-        completed_date=source_task.completed_date,
+        completed_date=None,
         tags_json=source_task.tags_json,
     )
     session.add(new_task)
@@ -310,15 +309,43 @@ def delete_task(
         )
 
     task_title = db_task.title
-    session.delete(db_task)
 
-    log = ActivityLog(
-        action="Task Deleted",
-        details=f"Task '{task_title}' (#{task_id}) was purged",
-        description=f"Task #{task_id} deleted from system",
-        task_title=task_title,
-    )
-    session.add(log)
-    session.commit()
+    try:
+        # 1. Clear associated subtasks to prevent foreign key violations
+        subtasks = session.exec(select(Subtask).where(Subtask.task_id == task_id)).all()
+        for subtask in subtasks:
+            session.delete(subtask)
+
+        # 2. Delete activity log records referencing task_id to prevent foreign key and NOT NULL violations
+        activity_logs = session.exec(select(ActivityLog).where(ActivityLog.task_id == task_id)).all()
+        for log_entry in activity_logs:
+            session.delete(log_entry)
+
+        # 3. Purge the main task record
+        session.delete(db_task)
+        session.commit()
+
+        # 4. Record system task deletion event in activity log
+        try:
+            log = ActivityLog(
+                action="Task Deleted",
+                details=f"Task '{task_title}' (#{task_id}) was purged",
+                description=f"Task #{task_id} deleted from system",
+                task_title=task_title,
+                task_id=None,
+            )
+            session.add(log)
+            session.commit()
+        except Exception:
+            session.rollback()
+    except HTTPException:
+        raise
+    except Exception as err:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to delete task #{task_id}: {str(err)}",
+        )
+
     return None
 

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ── Cyberpunk Design Tokens ─────────────────────────────── */
+/* ── Cyberpunk / Glitch Design Tokens ───────────────────── */
 @theme {
   --color-void: #0a0a0f;
   --color-void-card: #12121a;
@@ -13,6 +13,8 @@
   --color-neon-amber: #ffaa00;
   --color-fg: #e0e0e0;
   --color-fg-muted: #6b7280;
+  --color-input: #12121a;
+  --color-ring: #00ff88;
 
   --font-heading: "Orbitron", "Share Tech Mono", monospace;
   --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
@@ -185,13 +187,51 @@ body {
 }
 
 /* ── Utility Classes ─────────────────────────────────────── */
-.cursor-blink::after {
-  content: "_";
-  animation: blink 1s step-end infinite;
+@keyframes cyber-slice-1 {
+  0% { clip-path: inset(40% 0 61% 0); transform: skew(-0.3deg); }
+  20% { clip-path: inset(92% 0 1% 0); transform: skew(0.5deg) translateX(-5px); }
+  40% { clip-path: inset(15% 0 80% 0); transform: skew(-0.5deg) translateX(5px); }
+  60% { clip-path: inset(80% 0 5% 0); transform: skew(0.3deg) translateX(-2px); }
+  80% { clip-path: inset(3% 0 92% 0); transform: skew(-0.2deg) translateX(2px); }
+  100% { clip-path: inset(40% 0 61% 0); transform: skew(0deg); }
 }
 
-.cyber-glitch {
-  animation: rgbShift 4s ease-in-out infinite;
+@keyframes cyber-slice-2 {
+  0% { clip-path: inset(50% 0 30% 0); transform: skew(0.3deg); }
+  20% { clip-path: inset(12% 0 85% 0); transform: skew(-0.5deg) translateX(5px); }
+  40% { clip-path: inset(75% 0 15% 0); transform: skew(0.5deg) translateX(-5px); }
+  60% { clip-path: inset(5% 0 85% 0); transform: skew(-0.3deg) translateX(3px); }
+  80% { clip-path: inset(88% 0 2% 0); transform: skew(0.2deg) translateX(-3px); }
+  100% { clip-path: inset(50% 0 30% 0); transform: skew(0deg); }
+}
+
+.true-cyber-glitch {
+  position: relative;
+  display: inline-block;
+}
+
+/* Chromatic layers that slice horizontally */
+.true-cyber-glitch::before,
+.true-cyber-glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--color-void, #0a0a0f);
+}
+
+.true-cyber-glitch::before {
+  left: 2px;
+  text-shadow: -2px 0 #ff00ff;
+  animation: cyber-slice-1 2s infinite linear alternate-reverse;
+}
+
+.true-cyber-glitch::after {
+  left: -2px;
+  text-shadow: -2px 0 #00d4ff, 0 0 10px rgba(0, 255, 136, 0.4);
+  animation: cyber-slice-2 2s infinite linear alternate-reverse;
 }
 
 .neon-pulse {

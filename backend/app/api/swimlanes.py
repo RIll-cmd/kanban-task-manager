@@ -174,3 +174,71 @@ def delete_swimlane(
     session.delete(swimlane)
     session.commit()
     return {"message": f"Swimlane '{name}' deleted successfully", "fallback": fallback_category}
+
+
+@router.post("/swimlanes/{name}/duplicate", response_model=Swimlane, status_code=status.HTTP_201_CREATED)
+def duplicate_swimlane(
+    name: str,
+    session: Session = Depends(get_session),
+):
+    source_lane = session.exec(select(Swimlane).where(Swimlane.name == name)).first()
+    if not source_lane:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Swimlane '{name}' not found",
+        )
+
+    all_lanes = session.exec(select(Swimlane)).all()
+    existing_names = set(s.name for s in all_lanes)
+    max_order = max([s.order for s in all_lanes], default=-1)
+
+    new_name = f"{name} (Copy)"
+    counter = 1
+    while new_name in existing_names:
+        counter += 1
+        new_name = f"{name} (Copy {counter})"
+
+    new_lane = Swimlane(
+        name=new_name,
+        order=max_order + 1,
+        color=source_lane.color or "#00ffff",
+    )
+    session.add(new_lane)
+    session.commit()
+    session.refresh(new_lane)
+
+    # Duplicate status columns for new swimlane
+    source_statuses = session.exec(select(Status).where(Status.swimlane_name == name).order_by(Status.order.asc())).all()
+    for st in source_statuses:
+        new_status = Status(
+            name=st.name,
+            order=st.order,
+            default_progress=st.default_progress,
+            swimlane_name=new_name,
+            color=st.color or "#00ffff",
+        )
+        session.add(new_status)
+
+    # Duplicate tasks for new swimlane, setting progress explicitly to 0%
+    source_tasks = session.exec(select(Task).where(Task.category == name)).all()
+    for source_task in source_tasks:
+        new_task = Task(
+            title=source_task.title,
+            description=source_task.description,
+            note=source_task.note,
+            priority=source_task.priority,
+            category=new_name,
+            status=source_task.status,
+            previous_progress=0,  # Reset progress to 0% for cloned task
+            start_date=source_task.start_date,
+            scheduled_date=source_task.scheduled_date,
+            due_date=source_task.due_date,
+            completed_date=None,
+            tags_json=source_task.tags_json,
+        )
+        session.add(new_task)
+
+    session.commit()
+    session.refresh(new_lane)
+    return new_lane
+

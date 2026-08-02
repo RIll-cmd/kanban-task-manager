@@ -95,13 +95,6 @@ export default function EditTaskTerminal({ task, onClose, onSave, onDeleted, cat
     }
   }, [task])
 
-  // Smart progress override: snap progress to 100% when status becomes "Done"
-  useEffect(() => {
-    if (status && status.toUpperCase() === 'DONE') {
-      setProgress(100)
-    }
-  }, [status])
-
   // Close on Escape key
   useEffect(() => {
     if (!task) return
@@ -167,7 +160,6 @@ export default function EditTaskTerminal({ task, onClose, onSave, onDeleted, cat
     setErrors([])
 
     const finalProgress = validProgress
-    let prevProgress = task.previous_progress
     let finalCompletedDate = completedDate || null
 
     // Date memory sync logic for Done status
@@ -186,7 +178,7 @@ export default function EditTaskTerminal({ task, onClose, onSave, onDeleted, cat
       priority,
       category,
       progress_percentage: finalProgress,
-      previous_progress: prevProgress,
+      previous_progress: finalProgress,
       start_date: startDate || null,
       scheduled_date: scheduledDate || null,
       due_date: dueDate || null,
@@ -357,7 +349,13 @@ export default function EditTaskTerminal({ task, onClose, onSave, onDeleted, cat
                 <select
                   id="edit-task-status"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value)}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value
+                    setStatus(nextStatus)
+                    if (nextStatus.toUpperCase() === 'DONE') {
+                      setProgress(100)
+                    }
+                  }}
                   className="cyber-chamfer-sm w-full appearance-none border border-cyber-border bg-void py-2.5 pl-8 pr-10 font-mono text-sm uppercase text-neon-cyan transition-all duration-200 focus:border-neon-cyan focus:outline-none focus:shadow-[0_0_8px_#00d4ff,0_0_16px_#00d4ff30]"
                 >
                   {availableStatuses.map((s) => (
