@@ -4,6 +4,12 @@ A production-grade, highly customizable monorepo Kanban Task Manager built with 
 
 ---
 
+## 🖥️ System HUD Previews
+
+*   📂 [View All System HUD & Console Screen Capture Assets](./screenshots/)
+
+---
+
 ## 🚀 Key Features
 
 *   **Isolated Custom Swimlanes:** Initialize lanes with standard pipelines or deploy a completely clean slate to build isolated, lane-specific status queues from scratch.
